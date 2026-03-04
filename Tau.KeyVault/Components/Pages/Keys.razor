@@ -1,0 +1,1061 @@
+@page "/"
+@using Microsoft.JSInterop
+@attribute [Authorize]
+@inject KeyVaultService Vault
+@inject NotificationDispatchService Dispatch
+@inject IToastService ToastService
+@inject IJSRuntime JS
+@inject AppSettingsService AppSettings
+
+<PageTitle>Keys — @_appTitle</PageTitle>
+
+<div style="display:flex; align-items:center; margin-bottom:1rem;">
+    <h1 style="margin:0;">Key Vault</h1>
+    <div style="flex:1;"></div>
+    <FluentButton Appearance="Appearance.Accent" OnClick="ShowAddDialog"
+                  IconStart="@(new Icons.Regular.Size20.Add())">Add Key</FluentButton>
+</div>
+
+<!-- Environment toolbar -->
+<div class="env-toolbar">
+    <span class="env-toolbar-label">Environment:</span>
+    <FluentSelect TOption="string" Value="@_selectedEnvironment" ValueChanged="OnEnvironmentChanged"
+                  Style="min-width: 200px;">
+        <FluentOption Value="">Global</FluentOption>
+        @foreach (var env in _environments.Where(e => !string.IsNullOrEmpty(e)))
+        {
+            <FluentOption Value="@env">@env</FluentOption>
+        }
+    </FluentSelect>
+    <FluentTextField @bind-Value="_newEnvironment" Placeholder="New environment..." Style="width: 180px;" />
+    <FluentButton Appearance="Appearance.Outline" OnClick="AddEnvironment"
+                  IconStart="@(new Icons.Regular.Size16.Add())">Add Env</FluentButton>
+
+    @if (!string.IsNullOrEmpty(_selectedEnvironment))
+    {
+        <div class="env-toolbar-divider"></div>
+        <FluentButton Appearance="Appearance.Outline" OnClick="RenameEnvironmentDialog"
+                      IconStart="@(new Icons.Regular.Size16.Edit())"
+                      Title="Rename environment">Rename</FluentButton>
+        <FluentButton Appearance="Appearance.Outline" OnClick="DeleteEnvironment"
+                      IconStart="@(new Icons.Regular.Size16.Delete())"
+                      Style="color: var(--error-foreground, #d13438);"
+                      Title="Delete environment and all its keys">Delete Env</FluentButton>
+    }
+
+    <div class="env-toolbar-divider"></div>
+    <FluentButton Appearance="Appearance.Outline" OnClick="ShowExportDialog"
+                  IconStart="@(new Icons.Regular.Size16.ArrowDownload())"
+                  Title="Export environment keys">Export</FluentButton>
+    <FluentButton Appearance="Appearance.Outline" OnClick="ShowImportDialog"
+                  IconStart="@(new Icons.Regular.Size16.ArrowUpload())"
+                  Title="Import environment keys">Import</FluentButton>
+</div>
+
+<!-- Search filter -->
+<div style="margin-bottom: 1rem;">
+    <FluentTextField @bind-Value="_searchText" @bind-Value:after="ApplyFilter"
+                     Placeholder="Filter by key or value..."
+                     Style="width: 320px;"
+                     IconStart="@(new Icons.Regular.Size16.Search())" />
+</div>
+
+<!-- Keys grid -->
+@if (_totalFiltered == 0)
+{
+    <div class="empty-state-card">
+        @if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            <p style="margin:0; font-weight:500;">No matching keys</p>
+            <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">Try a different search term.</p>
+        }
+        else
+        {
+            <div class="empty-state-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                </svg>
+            </div>
+            <p style="margin:0.5rem 0 0; font-weight:500;">No keys yet</p>
+            <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">Click <strong>Add Key</strong> to create your first key-value pair.</p>
+        }
+    </div>
+}
+else
+{
+    <div class="kv-grid-wrapper">
+        <table class="kv-grid">
+            <colgroup>
+                <col style="width: 20%;" />
+                <col style="width: 36%;" />
+                <col style="width: 10%;" />
+                <col style="width: 14%;" />
+                <col style="width: 20%;" />
+            </colgroup>
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Value</th>
+                    <th>Type</th>
+                    <th>Environment</th>
+                    <th class="kv-grid-actions-col">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var entry in GetPagedItems())
+                {
+                    <tr>
+                        <td class="kv-grid-key">@entry.Key</td>
+                        <td class="kv-grid-value">
+                            @if (entry.IsSensitive && !_revealedIds.Contains(entry.Id))
+                            {
+                                <span class="kv-sensitive-mask">
+                                    <span class="kv-sensitive-dots">••••••••••••</span>
+                                    <FluentButton Appearance="Appearance.Stealth"
+                                                  IconStart="@(new Icons.Regular.Size16.Eye())"
+                                                  Title="Reveal value"
+                                                  Style="min-width:28px; height:24px; color:var(--accent-foreground-rest);"
+                                                  OnClick="@(() => ToggleReveal(entry.Id))" />
+                                </span>
+                            }
+                            else
+                            {
+                                @if (entry.IsSensitive && _revealedIds.Contains(entry.Id))
+                                {
+                                    <FluentButton Appearance="Appearance.Stealth"
+                                                  IconStart="@(new Icons.Regular.Size16.EyeOff())"
+                                                  Title="Hide value"
+                                                  Style="min-width:28px; height:24px; color:var(--neutral-foreground-hint); margin-right:0.25rem;"
+                                                  OnClick="@(() => ToggleReveal(entry.Id))" />
+                                }
+                                @if (entry.DataType == DataType.Json)
+                                {
+                                    <code>@TruncateValue(entry.Value, 100)</code>
+                                }
+                                else if (entry.DataType == DataType.Boolean)
+                                {
+                                    <span class="kv-type-badge kv-type-bool">@(entry.Value == "true" ? "True" : "False")</span>
+                                }
+                                else if (entry.DataType == DataType.Csv)
+                                {
+                                    var csvParts = GetCsvPreview(entry.Value);
+                                    foreach (var item in csvParts.Shown)
+                                    {
+                                        <span class="kv-csv-pill">@item</span>
+                                    }
+                                    if (csvParts.Remaining > 0)
+                                    {
+                                        <span class="kv-csv-more">+@csvParts.Remaining</span>
+                                    }
+                                }
+                                else
+                                {
+                                    @TruncateValue(entry.Value, 100)
+                                }
+                            }
+                        </td>
+                        <td>
+                            <span class="kv-type-badge kv-type-@entry.DataType.ToString().ToLowerInvariant()">@entry.DataType</span>
+                        </td>
+                        <td>
+                            <span class="kv-env-badge @(string.IsNullOrEmpty(entry.Environment) ? "kv-env-global" : "")">
+                                @(string.IsNullOrEmpty(entry.Environment) ? "Global" : entry.Environment)
+                            </span>
+                        </td>
+                        <td class="kv-grid-actions-col">
+                            <FluentButton Appearance="Appearance.Stealth"
+                                          IconStart="@(new Icons.Regular.Size16.Edit())"
+                                          Title="Edit"
+                                          OnClick="@(() => ShowEditDialog(entry))" />
+                            <FluentButton Appearance="Appearance.Stealth"
+                                          IconStart="@(new Icons.Regular.Size16.Delete())"
+                                          Title="Delete"
+                                          Style="color: var(--error-foreground, #d13438);"
+                                          OnClick="@(() => DeleteKey(entry))" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <!-- Paginator footer -->
+        <div class="kv-grid-footer">
+            <span class="kv-grid-count">@_totalFiltered item@(_totalFiltered != 1 ? "s" : "")</span>
+            @if (TotalPages > 1)
+            {
+                <div class="kv-grid-pager">
+                    <FluentButton Appearance="Appearance.Stealth" Disabled="@(_currentPage == 0)"
+                                  OnClick="@(() => GoToPage(0))">⟪</FluentButton>
+                    <FluentButton Appearance="Appearance.Stealth" Disabled="@(_currentPage == 0)"
+                                  OnClick="@(() => GoToPage(_currentPage - 1))">‹</FluentButton>
+                    <span class="kv-grid-page-label">Page @(_currentPage + 1) of @TotalPages</span>
+                    <FluentButton Appearance="Appearance.Stealth" Disabled="@(_currentPage >= TotalPages - 1)"
+                                  OnClick="@(() => GoToPage(_currentPage + 1))">›</FluentButton>
+                    <FluentButton Appearance="Appearance.Stealth" Disabled="@(_currentPage >= TotalPages - 1)"
+                                  OnClick="@(() => GoToPage(TotalPages - 1))">⟫</FluentButton>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<!-- Add/Edit Key Dialog -->
+@if (_showDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseDialog">
+        <div class="dialog-panel" @onclick:stopPropagation="true">
+            <div class="dialog-header">
+                <h3>@(_isEditing ? "Edit Key" : "Add Key")</h3>
+            </div>
+            <div class="dialog-body">
+                <div class="form-group">
+                    <label class="form-label">Key <span style="color:var(--error-foreground, #d13438);">*</span></label>
+                    <FluentTextField @bind-Value="_editKey" Required="true"
+                                     ReadOnly="@_isEditing" Style="width:100%;" />
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Environment</label>
+                    <FluentSelect TOption="string" @bind-Value="_editEnvironment" Style="width:100%;">
+                        <FluentOption Value="">Global</FluentOption>
+                        @foreach (var env in _environments.Where(e => !string.IsNullOrEmpty(e)))
+                        {
+                            <FluentOption Value="@env">@env</FluentOption>
+                        }
+                    </FluentSelect>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Data Type</label>
+                    <FluentSelect TOption="string" Value="@_editDataType.ToString()"
+                                  ValueChanged="OnDataTypeStringChanged" Style="width:100%;"
+                                  Height="250px" Position="SelectPosition.Below">
+                        <FluentOption Value="Text">Text</FluentOption>
+                        <FluentOption Value="Code">Code (Uppercase)</FluentOption>
+                        <FluentOption Value="Numeric">Numeric</FluentOption>
+                        <FluentOption Value="Boolean">Boolean</FluentOption>
+                        <FluentOption Value="Date">Date</FluentOption>
+                        <FluentOption Value="Time">Time</FluentOption>
+                        <FluentOption Value="DateTime">DateTime</FluentOption>
+                        <FluentOption Value="Json">JSON</FluentOption>
+                        <FluentOption Value="Csv">CSV List</FluentOption>
+                    </FluentSelect>
+                </div>
+
+                <div class="form-group" style="display:flex; align-items:center; gap:0.5rem;">
+                    <FluentCheckbox @bind-Value="_editIsSensitive" />
+                    <label class="form-label" style="margin:0; cursor:pointer;">Sensitive Data</label>
+                    <span style="font-size:0.78rem; color:var(--neutral-foreground-hint);">— value will be masked in list views</span>
+                </div>
+
+                <div class="form-group">
+                    @switch (_editDataType)
+                    {
+                        case DataType.Text:
+                            <label class="form-label">Value</label>
+                            <FluentTextArea @bind-Value="_editValue" Rows="4" Style="width:100%;" />
+                            break;
+
+                        case DataType.Code:
+                            <label class="form-label">Value <span style="font-weight:400; color:var(--neutral-foreground-hint);">(stored as UPPERCASE)</span></label>
+                            <FluentTextArea @bind-Value="_editValue" Rows="4" Style="width:100%;" />
+                            break;
+
+                        case DataType.Numeric:
+                            <label class="form-label">Value (decimal)</label>
+                            <FluentTextField @bind-Value="_editValue" Style="width:100%;"
+                                             Placeholder="0.00" />
+                            break;
+
+                        case DataType.Boolean:
+                            <label class="form-label">Value</label>
+                            <FluentSelect TOption="string" @bind-Value="_editValue" Style="width:100%;">
+                                <FluentOption Value="true">True</FluentOption>
+                                <FluentOption Value="false">False</FluentOption>
+                            </FluentSelect>
+                            break;
+
+                        case DataType.Date:
+                            <label class="form-label">Value <span style="font-weight:400; color:var(--neutral-foreground-hint);">(yyyy-MM-dd)</span></label>
+                            <FluentTextField @bind-Value="_editValue" Style="width:100%;"
+                                             Placeholder="2026-01-15" />
+                            break;
+
+                        case DataType.Time:
+                            <label class="form-label">Value <span style="font-weight:400; color:var(--neutral-foreground-hint);">(HH:mm:ss)</span></label>
+                            <FluentTextField @bind-Value="_editValue" Style="width:100%;"
+                                             Placeholder="14:30:00" />
+                            break;
+
+                        case DataType.DateTime:
+                            <label class="form-label">Value <span style="font-weight:400; color:var(--neutral-foreground-hint);">(yyyy-MM-ddTHH:mm:ss)</span></label>
+                            <FluentTextField @bind-Value="_editValue" Style="width:100%;"
+                                             Placeholder="2026-01-15T14:30:00" />
+                            break;
+
+                        case DataType.Json:
+                            <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem;">
+                                <label class="form-label" style="margin:0;">Value (JSON)</label>
+                                <FluentButton Appearance="Appearance.Outline" Size="ButtonSize.Small"
+                                              OnClick="FormatJson">Format</FluentButton>
+                                @if (!string.IsNullOrEmpty(_jsonError))
+                                {
+                                    <span style="color:var(--error-foreground, #d13438); font-size:0.8rem;">@_jsonError</span>
+                                }
+                            </div>
+                            <div id="monaco-container" style="height: 350px; border: 1px solid var(--neutral-stroke-divider-rest); border-radius: 6px; overflow: hidden;"></div>
+                            break;
+
+                        case DataType.Csv:
+                            <label class="form-label">CSV Values</label>
+                            <div class="csv-editor">
+                                <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
+                                    <FluentTextField @bind-Value="_csvNewItem" Placeholder="Add new item..."
+                                                     Style="flex:1;" @onkeydown="CsvKeyDown" />
+                                    <FluentButton Appearance="Appearance.Outline" OnClick="AddCsvItem"
+                                                  IconStart="@(new Icons.Regular.Size16.Add())">Add</FluentButton>
+                                </div>
+                                @if (_csvItemsList.Count > 0)
+                                {
+                                    <div class="csv-list">
+                                        @for (var i = 0; i < _csvItemsList.Count; i++)
+                                        {
+                                            var idx = i;
+                                            <div class="csv-item">
+                                                <span>@_csvItemsList[idx]</span>
+                                                <FluentButton Appearance="Appearance.Stealth"
+                                                              IconStart="@(new Icons.Regular.Size16.Delete())"
+                                                              Style="color: var(--error-foreground, #d13438); min-width:28px; height:28px;"
+                                                              OnClick="@(() => RemoveCsvItem(idx))" />
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p style="margin:0.5rem 0; font-size:0.82rem; color:var(--neutral-foreground-hint);">No items yet. Add items above.</p>
+                                }
+                            </div>
+                            break;
+                    }
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Accent" OnClick="SaveKey">Save</FluentButton>
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseDialog">Cancel</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Confirm Dialog -->
+@if (_showConfirmDialog)
+{
+    <div class="dialog-overlay" @onclick="CancelConfirm">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation="true">
+            <div class="dialog-header">
+                <h3>@_confirmTitle</h3>
+            </div>
+            <div class="dialog-body">
+                <p style="margin:0; color:var(--neutral-foreground-rest);">@_confirmMessage</p>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Accent" Style="background:var(--error-foreground, #d13438); border-color:var(--error-foreground, #d13438);"
+                              OnClick="AcceptConfirm">@_confirmYes</FluentButton>
+                <FluentButton Appearance="Appearance.Outline" OnClick="CancelConfirm">Cancel</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Rename Environment Dialog -->
+@if (_showRenameDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseRenameDialog">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation="true">
+            <div class="dialog-header">
+                <h3>Rename Environment</h3>
+            </div>
+            <div class="dialog-body">
+                <p style="margin-top:0; color:var(--neutral-foreground-hint);">
+                    Rename <strong>@_selectedEnvironment</strong> — all keys in this environment will be updated.
+                </p>
+                <div class="form-group">
+                    <label class="form-label">New Environment Name</label>
+                    <FluentTextField @bind-Value="_renameNewName" Required="true" Style="width:100%;" />
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Accent" OnClick="ConfirmRenameEnvironment">Rename</FluentButton>
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseRenameDialog">Cancel</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Export Dialog -->
+@if (_showExportDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseExportDialog">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation="true">
+            <div class="dialog-header">
+                <h3>Export Keys</h3>
+            </div>
+            <div class="dialog-body">
+                <p style="margin-top:0; color:var(--neutral-foreground-hint);">
+                    Export all keys from <strong>@(string.IsNullOrEmpty(_selectedEnvironment) ? "Global" : _selectedEnvironment)</strong> as a JSON file.
+                </p>
+                <div class="form-group">
+                    <label class="form-label">File Name</label>
+                    <FluentTextField @bind-Value="_exportFileName" Required="true" Style="width:100%;" />
+                </div>
+                <div style="padding:0.75rem; background:var(--neutral-fill-secondary-rest); border-radius:6px; border-left:3px solid var(--accent-fill-rest);">
+                    <p style="margin:0; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+                        <strong>@_keysToExportCount key(s)</strong> will be exported with all metadata (data types, sensitive flags).
+                    </p>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Accent" OnClick="DownloadExport"
+                              Disabled="@(_keysToExportCount == 0)"
+                              IconStart="@(new Icons.Regular.Size16.ArrowDownload())">Export</FluentButton>
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseExportDialog">Cancel</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Import Dialog -->
+@if (_showImportDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseImportDialog">
+        <div class="dialog-panel" @onclick:stopPropagation="true">
+            <div class="dialog-header">
+                <h3>Import Keys</h3>
+            </div>
+            <div class="dialog-body">
+                <p style="margin-top:0; color:var(--neutral-foreground-hint);">
+                    Import keys into <strong>@(string.IsNullOrEmpty(_selectedEnvironment) ? "Global" : _selectedEnvironment)</strong>.
+                    Choose how to handle existing keys:
+                </p>
+
+                <div class="import-mode-section">
+                    <label class="import-mode-option" for="mode-addmissing">
+                        <input type="radio" id="mode-addmissing" name="import-mode"
+                               checked="@(_importMode == "AddMissing")"
+                               @onchange="@(() => _importMode = "AddMissing")" />
+                        <div>
+                            <strong>Add Missing Only</strong>
+                            <div style="font-size:0.8rem; color:var(--neutral-foreground-hint); margin-top:0.15rem;">
+                                Only add new keys. Existing keys are left untouched. Safest option.
+                            </div>
+                        </div>
+                    </label>
+
+                    <label class="import-mode-option" for="mode-overwrite">
+                        <input type="radio" id="mode-overwrite" name="import-mode"
+                               checked="@(_importMode == "Overwrite")"
+                               @onchange="@(() => _importMode = "Overwrite")" />
+                        <div>
+                            <strong>Overwrite Existing</strong>
+                            <div style="font-size:0.8rem; color:var(--neutral-foreground-hint); margin-top:0.15rem;">
+                                Update keys that exist, add keys that don't. Other keys are preserved.
+                            </div>
+                        </div>
+                    </label>
+
+                    <label class="import-mode-option" for="mode-deleteall">
+                        <input type="radio" id="mode-deleteall" name="import-mode"
+                               checked="@(_importMode == "DeleteAll")"
+                               @onchange="@(() => _importMode = "DeleteAll")" />
+                        <div>
+                            <strong style="color:var(--error-foreground, #d13438);">Clean Import (Delete All)</strong>
+                            <div style="font-size:0.8rem; color:var(--neutral-foreground-hint); margin-top:0.15rem;">
+                                Delete ALL existing keys first, then import. Use for a clean slate.
+                            </div>
+                        </div>
+                    </label>
+                </div>
+
+                @if (!string.IsNullOrEmpty(_importError))
+                {
+                    <div style="padding:0.75rem; background:var(--neutral-fill-secondary-rest); border-left:3px solid var(--error-foreground, #d13438); margin-top:1rem; border-radius:4px;">
+                        <p style="margin:0; font-size:0.85rem; color:var(--error-foreground, #d13438);">@_importError</p>
+                    </div>
+                }
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Accent" OnClick="TriggerFileUpload"
+                              IconStart="@(new Icons.Regular.Size16.FolderOpen())">Choose File...</FluentButton>
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseImportDialog">Cancel</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Hidden file input for import -->
+<InputFile id="import-file-input" OnChange="HandleImportFileSelected"
+           accept=".json" style="display:none;" />
+
+@code {
+    private string _appTitle = "Tau Key Vault";
+
+    private List<KeyEntry> _keys = new();
+    private List<KeyEntry> _filtered = new();
+    private List<string> _environments = new();
+    private HashSet<string> _localEnvironments = new();
+    private string _selectedEnvironment = "";
+    private string _newEnvironment = "";
+    private string _searchText = "";
+    private int _currentPage;
+    private const int PageSize = 20;
+    private int _totalFiltered;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)_totalFiltered / PageSize));
+
+    // Key dialog state
+    private bool _showDialog;
+    private bool _isEditing;
+    private int _editId;
+    private string _editKey = "";
+    private string _editValue = "";
+    private string _editEnvironment = "";
+    private DataType _editDataType = DataType.Text;
+    private string _jsonError = "";
+
+    // Sensitive data
+    private bool _editIsSensitive;
+    private HashSet<int> _revealedIds = new();
+
+    // CSV editor state
+    private List<string> _csvItemsList = new();
+    private string _csvNewItem = "";
+
+    // Confirm dialog state
+    private bool _showConfirmDialog;
+    private string _confirmTitle = "";
+    private string _confirmMessage = "";
+    private string _confirmYes = "Yes";
+    private Func<Task>? _confirmAction;
+
+    // Rename dialog state
+    private bool _showRenameDialog;
+    private string _renameNewName = "";
+
+    // Export dialog state
+    private bool _showExportDialog;
+    private string _exportFileName = "";
+    private int _keysToExportCount;
+
+    // Import dialog state
+    private bool _showImportDialog;
+    private string _importMode = "AddMissing";
+    private string? _importError;
+    private List<ExportKeyItem>? _pendingImportKeys;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _appTitle = await AppSettings.GetAppTitleAsync();
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var dbEnvs = await Vault.GetEnvironmentsAsync();
+        _localEnvironments.ExceptWith(dbEnvs);
+
+        _environments = dbEnvs
+            .Union(_localEnvironments)
+            .Distinct()
+            .OrderBy(e => e)
+            .ToList();
+
+        if (!_environments.Contains(""))
+            _environments.Insert(0, "");
+
+        _keys = await Vault.GetKeysAsync(_selectedEnvironment);
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        var query = _keys.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            var search = _searchText.Trim().ToLowerInvariant();
+            query = query.Where(k =>
+                k.Key.ToLowerInvariant().Contains(search) ||
+                k.Value.ToLowerInvariant().Contains(search));
+        }
+
+        _filtered = query.ToList();
+        _totalFiltered = _filtered.Count;
+        if (_currentPage >= TotalPages) _currentPage = Math.Max(0, TotalPages - 1);
+    }
+
+    private List<KeyEntry> GetPagedItems() =>
+        _filtered.Skip(_currentPage * PageSize).Take(PageSize).ToList();
+
+    private void GoToPage(int page) =>
+        _currentPage = Math.Clamp(page, 0, TotalPages - 1);
+
+    private async Task OnEnvironmentChanged(string env)
+    {
+        _selectedEnvironment = env;
+        await LoadData();
+    }
+
+    private async Task AddEnvironment()
+    {
+        if (string.IsNullOrWhiteSpace(_newEnvironment)) return;
+        var trimmed = _newEnvironment.Trim().ToUpperInvariant();
+        if (!_environments.Contains(trimmed))
+        {
+            _localEnvironments.Add(trimmed);
+            _selectedEnvironment = trimmed;
+            _newEnvironment = "";
+            await LoadData();
+        }
+    }
+
+    // --- Environment rename ---
+    private void RenameEnvironmentDialog()
+    {
+        _renameNewName = _selectedEnvironment;
+        _showRenameDialog = true;
+    }
+
+    private void CloseRenameDialog() => _showRenameDialog = false;
+
+    private async Task ConfirmRenameEnvironment()
+    {
+        if (string.IsNullOrWhiteSpace(_renameNewName))
+        {
+            ToastService.ShowError("Environment name cannot be empty.");
+            return;
+        }
+
+        var newName = _renameNewName.Trim().ToUpperInvariant();
+        if (newName == _selectedEnvironment) { CloseRenameDialog(); return; }
+
+        try
+        {
+            var count = await Vault.RenameEnvironmentAsync(_selectedEnvironment, newName);
+            ToastService.ShowSuccess($"Environment renamed to '{newName}'. {count} key(s) updated.");
+            _selectedEnvironment = newName;
+            CloseRenameDialog();
+            await LoadData();
+        }
+        catch (InvalidOperationException ex) { ToastService.ShowError(ex.Message); }
+    }
+
+    // --- Confirm dialog helpers ---
+    private void ShowConfirm(string title, string message, string yesText, Func<Task> action)
+    {
+        _confirmTitle = title;
+        _confirmMessage = message;
+        _confirmYes = yesText;
+        _confirmAction = action;
+        _showConfirmDialog = true;
+    }
+
+    private void CancelConfirm() => _showConfirmDialog = false;
+
+    private async Task AcceptConfirm()
+    {
+        _showConfirmDialog = false;
+        if (_confirmAction is not null)
+            await _confirmAction();
+    }
+
+    // --- Environment delete ---
+    private void DeleteEnvironment()
+    {
+        ShowConfirm(
+            "Delete Environment",
+            $"Delete environment '{_selectedEnvironment}' and ALL its keys? This cannot be undone.",
+            "Yes, delete everything",
+            async () =>
+            {
+                try
+                {
+                    var count = await Vault.DeleteEnvironmentAsync(_selectedEnvironment);
+                    ToastService.ShowSuccess($"Environment '{_selectedEnvironment}' deleted with {count} key(s).");
+                    _selectedEnvironment = "";
+                    await LoadData();
+                }
+                catch (InvalidOperationException ex) { ToastService.ShowError(ex.Message); }
+            });
+    }
+
+    // --- Export ---
+    private async Task ShowExportDialog()
+    {
+        var envLabel = string.IsNullOrEmpty(_selectedEnvironment) ? "Global" : _selectedEnvironment;
+        _exportFileName = $"{envLabel}-keys-{DateTime.UtcNow:yyyyMMdd}.json";
+        var keysForEnv = await Vault.GetKeysAsync(_selectedEnvironment);
+        _keysToExportCount = keysForEnv.Count;
+        _showExportDialog = true;
+    }
+
+    private void CloseExportDialog() => _showExportDialog = false;
+
+    private async Task DownloadExport()
+    {
+        if (string.IsNullOrWhiteSpace(_exportFileName))
+        {
+            ToastService.ShowError("File name is required.");
+            return;
+        }
+
+        try
+        {
+            var payload = await Vault.ExportEnvironmentAsync(_selectedEnvironment);
+            var json = System.Text.Json.JsonSerializer.Serialize(payload,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+            var filename = _exportFileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                ? _exportFileName : $"{_exportFileName}.json";
+
+            await JS.InvokeVoidAsync("fileInterop.downloadFile", json, filename);
+            ToastService.ShowSuccess($"Exported {payload.KeyCount} key(s).");
+            CloseExportDialog();
+        }
+        catch (Exception ex)
+        {
+            ToastService.ShowError($"Export failed: {ex.Message}");
+        }
+    }
+
+    // --- Import ---
+    private void ShowImportDialog()
+    {
+        _importMode = "AddMissing";
+        _importError = null;
+        _pendingImportKeys = null;
+        _showImportDialog = true;
+    }
+
+    private void CloseImportDialog() => _showImportDialog = false;
+
+    private async Task TriggerFileUpload()
+    {
+        _importError = null;
+        await JS.InvokeVoidAsync("eval", "document.getElementById('import-file-input').click()");
+    }
+
+    private async Task HandleImportFileSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var stream = e.File.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+
+            var payload = System.Text.Json.JsonSerializer.Deserialize<ExportPayload>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (payload?.Keys is null || payload.Keys.Count == 0)
+            {
+                _importError = "No keys found in the import file.";
+                StateHasChanged();
+                return;
+            }
+
+            _pendingImportKeys = payload.Keys;
+            var envLabel = string.IsNullOrEmpty(_selectedEnvironment) ? "Global" : _selectedEnvironment;
+            var modeLabel = _importMode switch
+            {
+                "DeleteAll" => "Clean Import (delete all existing keys first)",
+                "Overwrite" => "Overwrite existing keys",
+                _ => "Add missing keys only"
+            };
+
+            _showImportDialog = false;
+            ShowConfirm(
+                "Confirm Import",
+                $"Import {payload.Keys.Count} key(s) into {envLabel}?\nMode: {modeLabel}",
+                "Yes, import",
+                PerformImport);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            _importError = "Invalid JSON file. Please select a valid export file.";
+        }
+        catch (Exception ex)
+        {
+            _importError = $"Error reading file: {ex.Message}";
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task PerformImport()
+    {
+        if (_pendingImportKeys is null) return;
+
+        try
+        {
+            if (!Enum.TryParse<ImportMode>(_importMode, out var mode))
+                mode = ImportMode.AddMissing;
+
+            var (imported, skipped) = await Vault.ImportKeysAsync(
+                _selectedEnvironment, _pendingImportKeys, mode);
+
+            var msg = $"Imported {imported} key(s).";
+            if (skipped > 0) msg += $" Skipped {skipped} existing key(s).";
+            ToastService.ShowSuccess(msg);
+
+            _pendingImportKeys = null;
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            ToastService.ShowError($"Import failed: {ex.Message}");
+        }
+    }
+
+    // --- DataType change handler ---
+    private async Task OnDataTypeStringChanged(string val)
+    {
+        var oldType = _editDataType;
+        if (!Enum.TryParse<DataType>(val, out var newType)) return;
+
+        // If switching away from JSON, dispose Monaco and grab value
+        if (oldType == DataType.Json && newType != DataType.Json)
+        {
+            try
+            {
+                _editValue = await JS.InvokeAsync<string>("monacoInterop.getValue");
+                await JS.InvokeVoidAsync("monacoInterop.dispose");
+            }
+            catch { /* Monaco may not be initialised yet */ }
+        }
+
+        // If switching away from CSV, serialise items back to value
+        if (oldType == DataType.Csv && newType != DataType.Csv)
+        {
+            _editValue = string.Join(",", _csvItemsList);
+        }
+
+        _editDataType = newType;
+
+        // If switching to Boolean, normalise to true/false
+        if (newType == DataType.Boolean)
+        {
+            var lower = _editValue?.Trim().ToLowerInvariant() ?? "";
+            _editValue = lower is "true" or "1" or "yes" ? "true" : "false";
+        }
+
+        // If switching to CSV, parse existing value into list
+        if (newType == DataType.Csv)
+        {
+            _csvItemsList = string.IsNullOrWhiteSpace(_editValue)
+                ? new List<string>()
+                : _editValue.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+        }
+
+        // If switching to JSON, initialise Monaco
+        if (newType == DataType.Json)
+        {
+            await Task.Delay(100);
+            await InitMonaco();
+        }
+    }
+
+    // --- Reveal/mask toggle ---
+    private void ToggleReveal(int id)
+    {
+        if (!_revealedIds.Remove(id))
+            _revealedIds.Add(id);
+    }
+
+    // --- Key add/edit dialog ---
+    private async Task ShowAddDialog()
+    {
+        _isEditing = false;
+        _editId = 0;
+        _editKey = "";
+        _editValue = "";
+        _editEnvironment = _selectedEnvironment;
+        _editDataType = DataType.Text;
+        _editIsSensitive = false;
+        _jsonError = "";
+        _csvItemsList = new();
+        _csvNewItem = "";
+        _showDialog = true;
+    }
+
+    private async Task ShowEditDialog(KeyEntry entry)
+    {
+        _isEditing = true;
+        _editId = entry.Id;
+        _editKey = entry.Key;
+        _editValue = entry.Value;
+        _editEnvironment = entry.Environment;
+        _editDataType = entry.DataType;
+        _editIsSensitive = entry.IsSensitive;
+        _jsonError = "";
+        _csvNewItem = "";
+
+        // Populate type-specific edit state
+        if (entry.DataType == DataType.Csv)
+        {
+            _csvItemsList = string.IsNullOrWhiteSpace(entry.Value)
+                ? new List<string>()
+                : entry.Value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+        }
+        else
+        {
+            _csvItemsList = new();
+        }
+
+        _showDialog = true;
+
+        if (entry.DataType == DataType.Json)
+        {
+            await Task.Delay(100);
+            await InitMonaco();
+        }
+    }
+
+    private async Task InitMonaco()
+    {
+        await JS.InvokeVoidAsync("monacoInterop.create", "monaco-container", _editValue, "json");
+    }
+
+    private async Task CloseDialog()
+    {
+        if (_editDataType == DataType.Json)
+        {
+            try { await JS.InvokeVoidAsync("monacoInterop.dispose"); } catch { }
+        }
+        _showDialog = false;
+    }
+
+    private async Task FormatJson()
+    {
+        var validation = await JS.InvokeAsync<string>("monacoInterop.validate");
+        if (string.IsNullOrEmpty(validation))
+        {
+            await JS.InvokeVoidAsync("monacoInterop.format");
+            _jsonError = "";
+        }
+        else
+        {
+            _jsonError = validation;
+        }
+    }
+
+    // --- CSV management ---
+    private void AddCsvItem()
+    {
+        if (string.IsNullOrWhiteSpace(_csvNewItem)) return;
+        var trimmed = _csvNewItem.Trim();
+
+        // Duplicate prevention (case-insensitive)
+        if (_csvItemsList.Any(x => x.Equals(trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            ToastService.ShowWarning($"'{trimmed}' already exists in the list.");
+            return;
+        }
+
+        _csvItemsList.Add(trimmed);
+        _csvNewItem = "";
+    }
+
+    private void RemoveCsvItem(int index)
+    {
+        if (index >= 0 && index < _csvItemsList.Count)
+            _csvItemsList.RemoveAt(index);
+    }
+
+    private void CsvKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            AddCsvItem();
+    }
+
+    // --- Save ---
+    private async Task SaveKey()
+    {
+        if (string.IsNullOrWhiteSpace(_editKey))
+        {
+            ToastService.ShowError("Key name is required.");
+            return;
+        }
+
+        // Extract value based on data type
+        var valueToSave = _editDataType switch
+        {
+            DataType.Json => await JS.InvokeAsync<string>("monacoInterop.getValue"),
+            DataType.Csv => string.Join(",", _csvItemsList),
+            _ => _editValue
+        };
+
+        // Validate JSON before saving
+        if (_editDataType == DataType.Json)
+        {
+            var validation = await JS.InvokeAsync<string>("monacoInterop.validate");
+            if (!string.IsNullOrEmpty(validation))
+            {
+                _jsonError = validation;
+                ToastService.ShowError("Invalid JSON. Please fix errors before saving.");
+                return;
+            }
+        }
+
+        // Validate numeric
+        if (_editDataType == DataType.Numeric && !string.IsNullOrWhiteSpace(valueToSave))
+        {
+            if (!decimal.TryParse(valueToSave, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out _))
+            {
+                ToastService.ShowError("Invalid numeric value.");
+                return;
+            }
+        }
+
+        try
+        {
+            var saved = await Vault.UpsertKeyAsync(_editKey.Trim(), valueToSave ?? "", _editEnvironment, _editDataType, _editIsSensitive);
+            ToastService.ShowSuccess($"Key '{_editKey}' saved.");
+
+            // Dispatch notifications (errors are logged internally, never thrown)
+            await Dispatch.DispatchAsync(saved.Environment, saved.Key);
+
+            await CloseDialog();
+            await LoadData();
+        }
+        catch (InvalidOperationException ex)
+        {
+            ToastService.ShowError(ex.Message);
+        }
+    }
+
+    private void DeleteKey(KeyEntry entry)
+    {
+        var envLabel = string.IsNullOrEmpty(entry.Environment) ? "Global" : entry.Environment;
+        ShowConfirm(
+            "Delete Key",
+            $"Delete key '{entry.Key}' from {envLabel}?",
+            "Yes, delete",
+            async () =>
+            {
+                await Vault.DeleteKeyAsync(entry.Id);
+                ToastService.ShowSuccess($"Key '{entry.Key}' deleted.");
+                await LoadData();
+            });
+    }
+
+    private static string TruncateValue(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength] + "...";
+
+    private static (string[] Shown, int Remaining) GetCsvPreview(string value)
+    {
+        var all = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return (all.Take(5).ToArray(), Math.Max(0, all.Length - 5));
+    }
+}

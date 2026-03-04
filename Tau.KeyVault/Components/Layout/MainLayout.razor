@@ -1,0 +1,63 @@
+@inherits LayoutComponentBase
+@inject AppSettingsService AppSettings
+@inject NavigationManager Nav
+
+<FluentDesignTheme @bind-Mode="@_mode"
+                   @bind-OfficeColor="@_officeColor"
+                   StorageName="theme" />
+
+<div class="app-layout">
+    <header class="app-header">
+        <span class="app-header-title">@_appTitle</span>
+        <div style="flex:1;"></div>
+        <AuthorizeView>
+            <Authorized>
+                <a href="/settings" class="app-header-link">Settings</a>
+                <form method="post" action="/auth/logout" style="display:inline;">
+                    <button type="submit" class="app-header-link app-header-btn">Logout</button>
+                </form>
+            </Authorized>
+        </AuthorizeView>
+    </header>
+
+    <div class="app-body">
+        <AuthorizeView>
+            <Authorized>
+                <nav class="app-sidebar">
+                    <a href="/" class="app-nav-item">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M7.5 2a3.5 3.5 0 0 0-1 6.855V11.5a.5.5 0 0 0 .5.5h1v4.5a1.5 1.5 0 0 0 3 0V12h1a.5.5 0 0 0 .5-.5V8.855A3.502 3.502 0 0 0 7.5 2Zm0 1a2.5 2.5 0 0 1 .5 4.95v3.55h-1V7.95A2.501 2.501 0 0 1 7.5 3Z"/></svg>
+                        Keys
+                    </a>
+                    <a href="/notifications" class="app-nav-item">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a5.5 5.5 0 0 0-5.5 5.5v3.03l-.78 1.56A1 1 0 0 0 4.62 14h3.26a2.12 2.12 0 0 0 4.24 0h3.26a1 1 0 0 0 .9-1.41l-.78-1.56V7.5A5.5 5.5 0 0 0 10 2Zm0 13a1.12 1.12 0 0 1-1.08-.85h2.16A1.12 1.12 0 0 1 10 15Zm-4.5-7.5a4.5 4.5 0 0 1 9 0v3.17l.73 1.47H4.77l.73-1.47V7.5Z"/></svg>
+                        Notifications
+                    </a>
+                    <a href="/settings" class="app-nav-item">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M1.91 7.38A8.5 8.5 0 0 1 9.5 1.05v2.02a6.5 6.5 0 0 0 0 12.86v2.02a8.5 8.5 0 0 1-7.59-6.33l-.36.14A1 1 0 0 1 .5 10.5v-2a1 1 0 0 1 1.05-1l.36.14Zm9.59-6.33A8.5 8.5 0 0 1 19.09 7.38l.36-.14A1 1 0 0 1 20.5 8.5v2a1 1 0 0 1-1.05 1l-.36-.14a8.5 8.5 0 0 1-7.59 6.33v-2.02a6.5 6.5 0 0 0 0-12.86V1.05ZM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm-2 3a2 2 0 1 1 4 0 2 2 0 0 1-4 0Z"/></svg>
+                        Settings
+                    </a>
+                </nav>
+            </Authorized>
+        </AuthorizeView>
+
+        <main class="app-content">
+            @Body
+        </main>
+    </div>
+</div>
+
+<FluentToastProvider />
+<FluentDialogProvider />
+
+@code {
+    private DesignThemeModes _mode = DesignThemeModes.Light;
+    private OfficeColor? _officeColor = Microsoft.FluentUI.AspNetCore.Components.OfficeColor.Default;
+    private string _appTitle = "Tau Key Vault";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _appTitle = await AppSettings.GetAppTitleAsync();
+        _mode = await AppSettings.GetThemeModeAsync();
+        _officeColor = await AppSettings.GetOfficeColorAsync();
+    }
+}

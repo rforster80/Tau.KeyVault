@@ -1,0 +1,202 @@
+@page "/settings"
+@attribute [Authorize]
+@inject AuthService AuthService
+@inject AppSettingsService AppSettings
+@inject AuthenticationStateProvider AuthState
+@inject IToastService ToastService
+@inject NavigationManager Nav
+
+<PageTitle>Settings — @_appTitle</PageTitle>
+
+<!-- Local theme component for live preview — overrides MainLayout's theme in real time -->
+<FluentDesignTheme @bind-Mode="@_themeMode"
+                   @bind-OfficeColor="@_officeColor"
+                   StorageName="theme" />
+
+<h1>Settings</h1>
+
+<!-- Theme & Appearance -->
+<div class="settings-card">
+    <h3 style="margin-top:0;">Theme &amp; Appearance</h3>
+
+    <div class="form-group">
+        <FluentSelect Label="Theme Mode"
+                      Width="250px"
+                      Items="@(Enum.GetValues<DesignThemeModes>())"
+                      @bind-SelectedOption="@_themeMode" />
+    </div>
+
+    <div class="form-group">
+        <FluentSelect Label="Accent Color"
+                      Items="@(Enum.GetValues<OfficeColor>().Select(i => (OfficeColor?)i))"
+                      Height="200px"
+                      Width="250px"
+                      @bind-SelectedOption="@_officeColor">
+            <OptionTemplate>
+                <FluentStack>
+                    <FluentIcon Value="@(new Icons.Filled.Size20.RectangleLandscape())"
+                                Color="Color.Custom"
+                                CustomColor="@GetOfficeColorHex(context)" />
+                    <FluentLabel>@context</FluentLabel>
+                </FluentStack>
+            </OptionTemplate>
+        </FluentSelect>
+    </div>
+
+    <!-- Live preview -->
+    <FluentStack Style="margin: 1rem 0; padding: 1rem; border: 1px solid var(--accent-fill-rest); border-radius: 6px;">
+        <FluentIcon Value="@(new Icons.Regular.Size24.PaintBrush())" />
+        <FluentLabel>Preview</FluentLabel>
+        <FluentButton Appearance="Appearance.Outline">Outline</FluentButton>
+        <FluentButton Appearance="Appearance.Accent">Accent</FluentButton>
+    </FluentStack>
+
+    <div style="display:flex; gap:0.5rem;">
+        <FluentButton Appearance="Appearance.Accent" OnClick="SaveTheme">Save Theme</FluentButton>
+        <FluentButton Appearance="Appearance.Outline" OnClick="PickRandomColor">Feeling lucky?</FluentButton>
+    </div>
+</div>
+
+<!-- App Title -->
+<div class="settings-card">
+    <h3 style="margin-top:0;">Application Title</h3>
+    <p style="margin:0 0 0.75rem; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+        Customize the title shown in the header and browser tab. Default is set in appsettings.json.
+    </p>
+
+    <div class="form-group">
+        <FluentTextField @bind-Value="_appTitle" Label="Title" Style="width:100%;" Placeholder="Tau Key Vault" />
+    </div>
+
+    <FluentButton Appearance="Appearance.Accent" OnClick="SaveAppTitle">Save Title</FluentButton>
+</div>
+
+<!-- Change Password -->
+<div class="settings-card">
+    <h3 style="margin-top:0;">Change Password</h3>
+
+    <EditForm Model="_pwModel" OnValidSubmit="HandleChangePassword" FormName="changePassword">
+        <FluentTextField @bind-Value="_pwModel.CurrentPassword" Label="Current Password"
+                         TextFieldType="TextFieldType.Password" Required="true"
+                         Style="width:100%; margin-bottom: 1rem;" />
+        <FluentTextField @bind-Value="_pwModel.NewPassword" Label="New Password"
+                         TextFieldType="TextFieldType.Password" Required="true"
+                         Style="width:100%; margin-bottom: 1rem;" />
+        <FluentTextField @bind-Value="_pwModel.ConfirmPassword" Label="Confirm New Password"
+                         TextFieldType="TextFieldType.Password" Required="true"
+                         Style="width:100%; margin-bottom: 1.5rem;" />
+
+        <FluentButton Type="ButtonType.Submit" Appearance="Appearance.Accent">
+            Change Password
+        </FluentButton>
+    </EditForm>
+</div>
+
+@code {
+    // ── Theme ────────────────────────────────────────────────────
+    private DesignThemeModes _themeMode = DesignThemeModes.Light;
+    private OfficeColor? _officeColor = Microsoft.FluentUI.AspNetCore.Components.OfficeColor.Default;
+    private string _appTitle = "Tau Key Vault";
+
+    // ── Password ─────────────────────────────────────────────────
+    private PasswordModel _pwModel = new();
+
+    private class PasswordModel
+    {
+        public string CurrentPassword { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+        public string ConfirmPassword { get; set; } = "";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _themeMode = await AppSettings.GetThemeModeAsync();
+        _officeColor = await AppSettings.GetOfficeColorAsync();
+        _appTitle = await AppSettings.GetAppTitleAsync();
+    }
+
+    // ── Theme actions ────────────────────────────────────────────
+    private async Task SaveTheme()
+    {
+        await AppSettings.SetThemeModeAsync(_themeMode);
+        await AppSettings.SetOfficeColorAsync(_officeColor);
+        ToastService.ShowSuccess("Theme saved. Reloading...");
+
+        // Force a full page reload so MainLayout picks up the new theme
+        await Task.Delay(300);
+        Nav.NavigateTo(Nav.Uri, forceLoad: true);
+    }
+
+    private void PickRandomColor()
+    {
+        _officeColor = OfficeColorUtilities.GetRandom();
+    }
+
+    private static string GetOfficeColorHex(OfficeColor? color) => color switch
+    {
+        OfficeColor.Default => "#036ac4",
+        OfficeColor.Word => "#185abd",
+        OfficeColor.Excel => "#107c41",
+        OfficeColor.PowerPoint => "#c43e1c",
+        OfficeColor.Outlook => "#0078d4",
+        OfficeColor.OneNote => "#7719aa",
+        OfficeColor.Teams => "#6264a7",
+        OfficeColor.SharePoint => "#038387",
+        OfficeColor.Stream => "#bc1948",
+        OfficeColor.Exchange => "#0078d4",
+        OfficeColor.Yammer => "#106ebe",
+        OfficeColor.OneDrive => "#0078d4",
+        OfficeColor.Sway => "#008272",
+        OfficeColor.Access => "#a4373a",
+        OfficeColor.Project => "#31752f",
+        OfficeColor.Visio => "#3955a3",
+        OfficeColor.Planner => "#31752f",
+        OfficeColor.Publisher => "#077568",
+        _ => "#036ac4"
+    };
+
+    private async Task SaveAppTitle()
+    {
+        if (string.IsNullOrWhiteSpace(_appTitle))
+        {
+            ToastService.ShowWarning("Title cannot be empty.");
+            return;
+        }
+
+        await AppSettings.SetAppTitleAsync(_appTitle.Trim());
+        ToastService.ShowSuccess("App title saved. Reloading...");
+
+        await Task.Delay(300);
+        Nav.NavigateTo(Nav.Uri, forceLoad: true);
+    }
+
+    // ── Password change ──────────────────────────────────────────
+    private async Task HandleChangePassword()
+    {
+        if (_pwModel.NewPassword != _pwModel.ConfirmPassword)
+        {
+            ToastService.ShowError("New passwords do not match.");
+            return;
+        }
+
+        if (_pwModel.NewPassword.Length < 4)
+        {
+            ToastService.ShowError("Password must be at least 4 characters.");
+            return;
+        }
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var username = authState.User.Identity?.Name ?? "admin";
+
+        var success = await AuthService.ChangePasswordAsync(username, _pwModel.CurrentPassword, _pwModel.NewPassword);
+        if (success)
+        {
+            ToastService.ShowSuccess("Password changed successfully.");
+            _pwModel = new();
+        }
+        else
+        {
+            ToastService.ShowError("Current password is incorrect.");
+        }
+    }
+}

@@ -1,0 +1,43 @@
+@page "/login"
+@layout Tau.KeyVault.Components.Layout.MainLayout
+@attribute [AllowAnonymous]
+@inject AppSettingsService AppSettings
+
+<PageTitle>Login — @_appTitle</PageTitle>
+
+<div style="max-width: 380px; margin: 80px auto;">
+    <div class="settings-card" style="padding: 2rem;">
+        <h2 style="margin-top:0;">Sign In</h2>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <FluentMessageBar Title="Error" Intent="MessageIntent.Error" Style="margin-bottom: 1rem;">
+                @_error
+            </FluentMessageBar>
+        }
+
+        <form method="post" action="/auth/login">
+            <FluentTextField Name="username" Label="Username" Required="true"
+                             Style="width:100%; margin-bottom: 1rem;" />
+            <FluentTextField Name="password" Label="Password" TextFieldType="TextFieldType.Password"
+                             Required="true" Style="width:100%; margin-bottom: 1.5rem;" />
+            <input type="hidden" name="returnUrl" value="/" />
+            <FluentButton Type="ButtonType.Submit" Appearance="Appearance.Accent"
+                          Style="width:100%;">Login</FluentButton>
+        </form>
+    </div>
+</div>
+
+@code {
+    private string _appTitle = "Tau Key Vault";
+
+    [SupplyParameterFromQuery] private string? Error { get; set; }
+
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _appTitle = await AppSettings.GetAppTitleAsync();
+        _error = Error;
+    }
+}

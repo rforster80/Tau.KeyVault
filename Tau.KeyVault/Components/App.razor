@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="stylesheet" href="_content/Microsoft.FluentUI.AspNetCore.Components/css/reboot.css" />
+    <link rel="stylesheet" href="app.css" />
+    <HeadOutlet @rendermode="RenderMode.InteractiveServer" />
+</head>
+
+<body>
+    <Routes @rendermode="RenderMode.InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+
+    <!-- Monaco Editor from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
+    <script>
+        // Configure Monaco AMD loader
+        require.config({
+            paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs' }
+        });
+
+        window.monacoInterop = {
+            _editor: null,
+            _ready: false,
+            _readyPromise: null,
+
+            ensureReady: function () {
+                if (this._readyPromise) return this._readyPromise;
+                this._readyPromise = new Promise((resolve) => {
+                    if (this._ready) { resolve(); return; }
+                    require(['vs/editor/editor.main'], function () {
+                        window.monacoInterop._ready = true;
+                        resolve();
+                    });
+                });
+                return this._readyPromise;
+            },
+
+            create: async function (elementId, value, language) {
+                await this.ensureReady();
+                this.dispose();
+
+                var container = document.getElementById(elementId);
+                if (!container) return;
+
+                this._editor = monaco.editor.create(container, {
+                    value: value || '',
+                    language: language || 'json',
+                    theme: 'vs',
+                    automaticLayout: true,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    fontSize: 14,
+                    lineNumbers: 'on',
+                    renderLineHighlight: 'line',
+                    tabSize: 2,
+                    wordWrap: 'on',
+                    folding: true,
+                    formatOnPaste: true,
+                    formatOnType: true,
+                    scrollbar: {
+                        verticalScrollbarSize: 10,
+                        horizontalScrollbarSize: 10
+                    }
+                });
+            },
+
+            getValue: function () {
+                if (this._editor) return this._editor.getValue();
+                return '';
+            },
+
+            setValue: function (value) {
+                if (this._editor) this._editor.setValue(value || '');
+            },
+
+            format: function () {
+                if (this._editor) {
+                    this._editor.getAction('editor.action.formatDocument').run();
+                }
+            },
+
+            validate: function () {
+                if (!this._editor) return '';
+                var value = this._editor.getValue();
+                try {
+                    JSON.parse(value);
+                    return '';
+                } catch (e) {
+                    return e.message;
+                }
+            },
+
+            dispose: function () {
+                if (this._editor) {
+                    this._editor.dispose();
+                    this._editor = null;
+                }
+            }
+        };
+    </script>
+
+    <!-- File download interop -->
+    <script>
+        window.fileInterop = {
+            downloadFile: function (jsonString, filename) {
+                var blob = new Blob([jsonString], { type: 'application/json' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+        };
+    </script>
+</body>
+
+</html>

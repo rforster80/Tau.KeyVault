@@ -1,0 +1,569 @@
+@page "/notifications"
+@attribute [Authorize]
+@inject NotificationConfigService NotifService
+@inject NotificationDispatchService DispatchService
+@inject KeyVaultService Vault
+@inject IToastService ToastService
+@inject AppSettingsService AppSettings
+
+<PageTitle>Notifications — @_appTitle</PageTitle>
+
+<div style="display:flex; align-items:center; margin-bottom:1rem;">
+    <h1 style="margin:0;">Notifications</h1>
+</div>
+
+<!-- Environment toolbar -->
+<div class="env-toolbar">
+    <span class="env-toolbar-label">Environment:</span>
+    <FluentSelect TOption="string" Value="@_selectedEnvironment" ValueChanged="OnEnvironmentChanged"
+                  Style="min-width: 200px;">
+        <FluentOption Value="">Global</FluentOption>
+        @foreach (var env in _environments.Where(e => !string.IsNullOrEmpty(e)))
+        {
+            <FluentOption Value="@env">@env</FluentOption>
+        }
+    </FluentSelect>
+</div>
+
+<!-- NATS Servers Section -->
+<div class="notif-section">
+    <div class="notif-section-header">
+        <h3>NATS Servers</h3>
+        <FluentButton Appearance="Appearance.Accent" OnClick="ShowAddNatsDialog"
+                      IconStart="@(new Icons.Regular.Size16.Add())">Add NATS Server</FluentButton>
+    </div>
+
+    @if (_natsConfigs.Count == 0)
+    {
+        <div class="empty-state-card">
+            <p style="margin:0; font-weight:500;">No NATS servers configured</p>
+            <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+                Click <strong>Add NATS Server</strong> to register a NATS endpoint for this environment.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="kv-grid-wrapper">
+            <table class="kv-grid">
+                <thead>
+                    <tr>
+                        <th style="width:30%;">Server URL</th>
+                        <th style="width:30%;">Queue</th>
+                        <th style="width:12%;">Lowercase Env</th>
+                        <th style="width:10%;">Enabled</th>
+                        <th class="kv-grid-actions-col" style="width:18%;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var nats in _natsConfigs)
+                    {
+                        <tr>
+                            <td class="kv-grid-value"><code>@nats.ServerUrl</code></td>
+                            <td class="kv-grid-value">
+                                <code>@nats.Queue</code>
+                                @if (nats.Queue.Contains("{environment}"))
+                                {
+                                    <div class="notif-preview">@NotificationConfigService.ResolvePlaceholders(nats.Queue, GetCurrentEnvDisplay(), lowercaseEnv: nats.LowercaseEnvironment)</div>
+                                }
+                            </td>
+                            <td>
+                                @if (nats.LowercaseEnvironment)
+                                {
+                                    <span class="kv-type-badge kv-type-boolean">Yes</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge kv-type-text">No</span>
+                                }
+                            </td>
+                            <td>
+                                @if (nats.Enabled)
+                                {
+                                    <span class="kv-type-badge kv-type-numeric">Active</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge kv-type-text">Disabled</span>
+                                }
+                            </td>
+                            <td class="kv-grid-actions-col">
+                                <FluentButton Appearance="Appearance.Outline" OnClick="() => EditNats(nats)"
+                                              IconStart="@(new Icons.Regular.Size16.Edit())"
+                                              Title="Edit" />
+                                <FluentButton Appearance="Appearance.Outline" OnClick="() => DeleteNats(nats)"
+                                              Style="color: var(--error-foreground, #d13438); margin-left: 0.25rem;"
+                                              IconStart="@(new Icons.Regular.Size16.Delete())"
+                                              Title="Delete" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<!-- Webhook Section -->
+<div class="notif-section">
+    <div class="notif-section-header">
+        <h3>Webhooks</h3>
+        <FluentButton Appearance="Appearance.Accent" OnClick="ShowAddWebhookDialog"
+                      IconStart="@(new Icons.Regular.Size16.Add())">Add Webhook</FluentButton>
+    </div>
+
+    @if (_webhookConfigs.Count == 0)
+    {
+        <div class="empty-state-card">
+            <p style="margin:0; font-weight:500;">No webhooks configured</p>
+            <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+                Click <strong>Add Webhook</strong> to register a webhook URL for this environment.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="kv-grid-wrapper">
+            <table class="kv-grid">
+                <thead>
+                    <tr>
+                        <th style="width:45%;">URL</th>
+                        <th style="width:12%;">Lowercase Env</th>
+                        <th style="width:10%;">Enabled</th>
+                        <th class="kv-grid-actions-col" style="width:18%;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var wh in _webhookConfigs)
+                    {
+                        <tr>
+                            <td class="kv-grid-value">
+                                <code>@wh.Url</code>
+                                @if (wh.Url.Contains("{environment}") || wh.Url.Contains("{key}"))
+                                {
+                                    <div class="notif-preview">@NotificationConfigService.ResolvePlaceholders(wh.Url, GetCurrentEnvDisplay(), key: "my-key", lowercaseEnv: wh.LowercaseEnvironment)</div>
+                                }
+                            </td>
+                            <td>
+                                @if (wh.LowercaseEnvironment)
+                                {
+                                    <span class="kv-type-badge kv-type-boolean">Yes</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge kv-type-text">No</span>
+                                }
+                            </td>
+                            <td>
+                                @if (wh.Enabled)
+                                {
+                                    <span class="kv-type-badge kv-type-numeric">Active</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge kv-type-text">Disabled</span>
+                                }
+                            </td>
+                            <td class="kv-grid-actions-col">
+                                <FluentButton Appearance="Appearance.Outline" OnClick="() => EditWebhook(wh)"
+                                              IconStart="@(new Icons.Regular.Size16.Edit())"
+                                              Title="Edit" />
+                                <FluentButton Appearance="Appearance.Outline" OnClick="() => DeleteWebhook(wh)"
+                                              Style="color: var(--error-foreground, #d13438); margin-left: 0.25rem;"
+                                              IconStart="@(new Icons.Regular.Size16.Delete())"
+                                              Title="Delete" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<!-- Notification Logs Section -->
+<div class="notif-section">
+    <div class="notif-section-header">
+        <h3>Dispatch Log</h3>
+        <div style="display:flex; gap:0.5rem;">
+            <FluentButton Appearance="Appearance.Outline" OnClick="RefreshLogs"
+                          IconStart="@(new Icons.Regular.Size16.ArrowClockwise())"
+                          Title="Refresh logs">Refresh</FluentButton>
+            @if (_logs.Count > 0)
+            {
+                <FluentButton Appearance="Appearance.Outline" OnClick="ClearLogs"
+                              Style="color: var(--error-foreground, #d13438);"
+                              IconStart="@(new Icons.Regular.Size16.Delete())"
+                              Title="Clear all logs">Clear</FluentButton>
+            }
+        </div>
+    </div>
+
+    @if (_logs.Count == 0)
+    {
+        <div class="empty-state-card">
+            <p style="margin:0; font-weight:500;">No dispatch logs</p>
+            <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+                Notification dispatches will be logged here when key-value pairs are saved.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="kv-grid-wrapper">
+            <table class="kv-grid">
+                <thead>
+                    <tr>
+                        <th style="width:10%;">Status</th>
+                        <th style="width:8%;">Type</th>
+                        <th style="width:12%;">Key</th>
+                        <th style="width:35%;">Target</th>
+                        <th style="width:20%;">Error</th>
+                        <th style="width:15%;">Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var log in _logs)
+                    {
+                        <tr class="@(log.Success ? "" : "notif-log-error")">
+                            <td>
+                                @if (log.Success)
+                                {
+                                    <span class="kv-type-badge kv-type-numeric">OK</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge notif-badge-error">FAIL</span>
+                                }
+                            </td>
+                            <td>
+                                @if (log.Type == NotificationType.Nats)
+                                {
+                                    <span class="kv-type-badge kv-type-json">NATS</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge kv-type-code">WEBHOOK</span>
+                                }
+                            </td>
+                            <td class="kv-grid-key">@log.Key</td>
+                            <td class="kv-grid-value" title="@log.Target"><code style="font-size:0.75rem;">@log.Target</code></td>
+                            <td class="kv-grid-value" style="color:var(--error-foreground, #d13438); font-size:0.8rem;" title="@log.ErrorMessage">
+                                @(log.ErrorMessage != null && log.ErrorMessage.Length > 60
+                                    ? log.ErrorMessage[..60] + "..."
+                                    : log.ErrorMessage)
+                            </td>
+                            <td style="font-size:0.8rem; color:var(--neutral-foreground-hint);">@log.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<!-- NATS Add/Edit Dialog -->
+@if (_showNatsDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseNatsDialog">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation>
+            <div class="dialog-header">
+                <h3>@(_isEditingNats ? "Edit NATS Server" : "Add NATS Server")</h3>
+            </div>
+            <div class="dialog-body">
+                <div class="form-group">
+                    <label class="form-label">Server URL</label>
+                    <FluentTextField @bind-Value="_editNatsServerUrl" Placeholder="nats://localhost:4222" Style="width:100%;" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Queue</label>
+                    <FluentTextField @bind-Value="_editNatsQueue" Placeholder="keyvault.{environment}.updates" Style="width:100%;" />
+                    @if (!string.IsNullOrWhiteSpace(_editNatsQueue) && _editNatsQueue.Contains("{environment}"))
+                    {
+                        <div class="notif-preview">Preview: @NotificationConfigService.ResolvePlaceholders(_editNatsQueue, GetCurrentEnvDisplay(), lowercaseEnv: _editNatsLowercase)</div>
+                    }
+                </div>
+                <div class="form-group" style="display:flex; gap:1.5rem;">
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="checkbox" @bind="_editNatsLowercase" />
+                        <span class="form-label" style="margin:0;">Lowercase environment</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="checkbox" @bind="_editNatsEnabled" />
+                        <span class="form-label" style="margin:0;">Enabled</span>
+                    </label>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseNatsDialog">Cancel</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" OnClick="SaveNats">@(_isEditingNats ? "Update" : "Add")</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Webhook Add/Edit Dialog -->
+@if (_showWebhookDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseWebhookDialog">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation>
+            <div class="dialog-header">
+                <h3>@(_isEditingWebhook ? "Edit Webhook" : "Add Webhook")</h3>
+            </div>
+            <div class="dialog-body">
+                <div class="form-group">
+                    <label class="form-label">URL</label>
+                    <FluentTextField @bind-Value="_editWebhookUrl" Placeholder="https://api.example.com/{environment}/notify?key={key}" Style="width:100%;" />
+                    @if (!string.IsNullOrWhiteSpace(_editWebhookUrl) && (_editWebhookUrl.Contains("{environment}") || _editWebhookUrl.Contains("{key}")))
+                    {
+                        <div class="notif-preview">Preview: @NotificationConfigService.ResolvePlaceholders(_editWebhookUrl, GetCurrentEnvDisplay(), key: "my-key", lowercaseEnv: _editWebhookLowercase)</div>
+                    }
+                </div>
+                <div class="form-group" style="display:flex; gap:1.5rem;">
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="checkbox" @bind="_editWebhookLowercase" />
+                        <span class="form-label" style="margin:0;">Lowercase environment</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="checkbox" @bind="_editWebhookEnabled" />
+                        <span class="form-label" style="margin:0;">Enabled</span>
+                    </label>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseWebhookDialog">Cancel</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" OnClick="SaveWebhook">@(_isEditingWebhook ? "Update" : "Add")</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Confirm dialog -->
+@if (_showConfirm)
+{
+    <div class="dialog-overlay" @onclick="CancelConfirm">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation>
+            <div class="dialog-header">
+                <h3>@_confirmTitle</h3>
+            </div>
+            <div class="dialog-body">
+                <p style="margin:0;">@_confirmMessage</p>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Outline" OnClick="CancelConfirm">Cancel</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" Style="background:var(--error-foreground, #d13438);" OnClick="AcceptConfirm">@_confirmYesText</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string _appTitle = "Tau Key Vault";
+
+    // ── Environment ──────────────────────────────────────────────
+    private List<string> _environments = new();
+    private string _selectedEnvironment = "";
+
+    // ── NATS ─────────────────────────────────────────────────────
+    private List<NatsConfig> _natsConfigs = new();
+    private bool _showNatsDialog;
+    private bool _isEditingNats;
+    private int _editNatsId;
+    private string _editNatsServerUrl = "";
+    private string _editNatsQueue = "";
+    private bool _editNatsLowercase = true;
+    private bool _editNatsEnabled = true;
+
+    // ── Webhooks ─────────────────────────────────────────────────
+    private List<WebhookConfig> _webhookConfigs = new();
+    private bool _showWebhookDialog;
+    private bool _isEditingWebhook;
+    private int _editWebhookId;
+    private string _editWebhookUrl = "";
+    private bool _editWebhookLowercase = true;
+    private bool _editWebhookEnabled = true;
+
+    // ── Logs ──────────────────────────────────────────────────────
+    private List<NotificationLog> _logs = new();
+
+    // ── Confirm dialog ───────────────────────────────────────────
+    private bool _showConfirm;
+    private string _confirmTitle = "";
+    private string _confirmMessage = "";
+    private string _confirmYesText = "Delete";
+    private Func<Task>? _confirmAction;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _appTitle = await AppSettings.GetAppTitleAsync();
+        _environments = await Vault.GetEnvironmentsAsync();
+        if (!_environments.Contains(""))
+            _environments.Insert(0, "");
+        await LoadConfigs();
+    }
+
+    private async Task OnEnvironmentChanged(string env)
+    {
+        _selectedEnvironment = env;
+        await LoadConfigs();
+    }
+
+    private async Task LoadConfigs()
+    {
+        _natsConfigs = await NotifService.GetNatsConfigsAsync(_selectedEnvironment);
+        _webhookConfigs = await NotifService.GetWebhookConfigsAsync(_selectedEnvironment);
+        _logs = await DispatchService.GetLogsAsync(_selectedEnvironment);
+    }
+
+    private string GetCurrentEnvDisplay() =>
+        string.IsNullOrEmpty(_selectedEnvironment) ? "GLOBAL" : _selectedEnvironment;
+
+    // ── NATS dialog ──────────────────────────────────────────────
+    private void ShowAddNatsDialog()
+    {
+        _isEditingNats = false;
+        _editNatsId = 0;
+        _editNatsServerUrl = "";
+        _editNatsQueue = "";
+        _editNatsLowercase = true;
+        _editNatsEnabled = true;
+        _showNatsDialog = true;
+    }
+
+    private void EditNats(NatsConfig config)
+    {
+        _isEditingNats = true;
+        _editNatsId = config.Id;
+        _editNatsServerUrl = config.ServerUrl;
+        _editNatsQueue = config.Queue;
+        _editNatsLowercase = config.LowercaseEnvironment;
+        _editNatsEnabled = config.Enabled;
+        _showNatsDialog = true;
+    }
+
+    private void CloseNatsDialog() => _showNatsDialog = false;
+
+    private async Task SaveNats()
+    {
+        if (string.IsNullOrWhiteSpace(_editNatsServerUrl))
+        {
+            ToastService.ShowWarning("Server URL is required.");
+            return;
+        }
+
+        if (_isEditingNats)
+        {
+            await NotifService.UpdateNatsConfigAsync(_editNatsId, _editNatsServerUrl, _editNatsQueue, _editNatsLowercase, _editNatsEnabled);
+            ToastService.ShowSuccess("NATS server updated.");
+        }
+        else
+        {
+            await NotifService.AddNatsConfigAsync(_selectedEnvironment, _editNatsServerUrl, _editNatsQueue, _editNatsLowercase, _editNatsEnabled);
+            ToastService.ShowSuccess("NATS server added.");
+        }
+
+        _showNatsDialog = false;
+        await LoadConfigs();
+    }
+
+    private void DeleteNats(NatsConfig config)
+    {
+        ShowConfirm("Delete NATS Server", $"Delete NATS server \"{config.ServerUrl}\"?", "Delete", async () =>
+        {
+            await NotifService.DeleteNatsConfigAsync(config.Id);
+            ToastService.ShowSuccess("NATS server deleted.");
+            await LoadConfigs();
+        });
+    }
+
+    // ── Webhook dialog ───────────────────────────────────────────
+    private void ShowAddWebhookDialog()
+    {
+        _isEditingWebhook = false;
+        _editWebhookId = 0;
+        _editWebhookUrl = "";
+        _editWebhookLowercase = true;
+        _editWebhookEnabled = true;
+        _showWebhookDialog = true;
+    }
+
+    private void EditWebhook(WebhookConfig config)
+    {
+        _isEditingWebhook = true;
+        _editWebhookId = config.Id;
+        _editWebhookUrl = config.Url;
+        _editWebhookLowercase = config.LowercaseEnvironment;
+        _editWebhookEnabled = config.Enabled;
+        _showWebhookDialog = true;
+    }
+
+    private void CloseWebhookDialog() => _showWebhookDialog = false;
+
+    private async Task SaveWebhook()
+    {
+        if (string.IsNullOrWhiteSpace(_editWebhookUrl))
+        {
+            ToastService.ShowWarning("URL is required.");
+            return;
+        }
+
+        if (_isEditingWebhook)
+        {
+            await NotifService.UpdateWebhookConfigAsync(_editWebhookId, _editWebhookUrl, _editWebhookLowercase, _editWebhookEnabled);
+            ToastService.ShowSuccess("Webhook updated.");
+        }
+        else
+        {
+            await NotifService.AddWebhookConfigAsync(_selectedEnvironment, _editWebhookUrl, _editWebhookLowercase, _editWebhookEnabled);
+            ToastService.ShowSuccess("Webhook added.");
+        }
+
+        _showWebhookDialog = false;
+        await LoadConfigs();
+    }
+
+    private void DeleteWebhook(WebhookConfig config)
+    {
+        ShowConfirm("Delete Webhook", $"Delete webhook \"{config.Url}\"?", "Delete", async () =>
+        {
+            await NotifService.DeleteWebhookConfigAsync(config.Id);
+            ToastService.ShowSuccess("Webhook deleted.");
+            await LoadConfigs();
+        });
+    }
+
+    // ── Log helpers ────────────────────────────────────────────────
+    private async Task RefreshLogs()
+    {
+        _logs = await DispatchService.GetLogsAsync(_selectedEnvironment);
+    }
+
+    private void ClearLogs()
+    {
+        ShowConfirm("Clear Logs", "Delete all notification logs for this environment?", "Clear All", async () =>
+        {
+            var count = await DispatchService.ClearLogsAsync(_selectedEnvironment);
+            ToastService.ShowSuccess($"Cleared {count} log(s).");
+            await RefreshLogs();
+        });
+    }
+
+    // ── Confirm helper ───────────────────────────────────────────
+    private void ShowConfirm(string title, string message, string yesText, Func<Task> action)
+    {
+        _confirmTitle = title;
+        _confirmMessage = message;
+        _confirmYesText = yesText;
+        _confirmAction = action;
+        _showConfirm = true;
+    }
+
+    private void CancelConfirm() => _showConfirm = false;
+
+    private async Task AcceptConfirm()
+    {
+        _showConfirm = false;
+        if (_confirmAction != null)
+            await _confirmAction();
+    }
+}
