@@ -98,6 +98,7 @@ appsettings.Production.json
 .env.*
 
 # ── Publish Scripts ──────────────────────────────────────
+build-docker.sh
 publish-nuget.ps1
 publish-nuget.sh
 nuget_version.txt
