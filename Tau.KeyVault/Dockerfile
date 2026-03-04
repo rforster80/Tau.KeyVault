@@ -3,7 +3,7 @@ WORKDIR /src
 # Build stage
 
 COPY ["Tau.KeyVault.csproj", "./"]
-RUN dotnet restore "Tau.KeyVault.csproj" --configfile nuget.config
+RUN dotnet restore "Tau.KeyVault.csproj" 
 
 COPY . .
 RUN dotnet publish "Tau.KeyVault.csproj" -c Release -o /app/publish /p:UseAppHost=false
