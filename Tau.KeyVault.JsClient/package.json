@@ -1,0 +1,27 @@
+{
+  "name": "tau-keyvault-client",
+  "version": "1.0.0",
+  "description": "JavaScript/TypeScript client library for the Tau Key Vault API. Supports JSON and Protocol Buffers transport with typed helpers for all key-value data types.",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "types": "./src/index.d.ts"
+    }
+  },
+  "files": [
+    "src/**/*"
+  ],
+  "dependencies": {
+    "protobufjs": "^7.4.0"
+  },
+  "keywords": [
+    "keyvault",
+    "config",
+    "protobuf",
+    "tau"
+  ],
+  "license": "UNLICENSED"
+}

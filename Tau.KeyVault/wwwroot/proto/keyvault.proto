@@ -1,0 +1,88 @@
+// ─────────────────────────────────────────────────────────────
+// Tau Key Vault — Protocol Buffers Schema
+// Auto-generated at application startup. Do not edit manually.
+// Download: GET /api/keys/proto
+// ─────────────────────────────────────────────────────────────
+
+syntax = "proto3";
+
+package tau.keyvault;
+package Tau.KeyVault.Models;
+import "protobuf-net/bcl.proto"; // schema for protobuf-net's handling of core .NET types
+
+message DeleteEnvironmentResponse {
+   string Message = 1;
+   int32 DeletedKeys = 2;
+}
+message EnvironmentListResponse {
+   repeated string Environments = 1;
+}
+message ErrorResponse {
+   string Error = 1;
+}
+message ExportKeyItemResponse {
+   string Key = 1;
+   string Value = 2;
+   string DataType = 3;
+   bool IsSensitive = 4;
+}
+message ExportPayloadResponse {
+   string Version = 1;
+   .bcl.DateTime ExportDate = 2;
+   string Environment = 3;
+   int32 KeyCount = 4;
+   repeated ExportKeyItemResponse Keys = 5;
+}
+message ImportKeyItem {
+   string Key = 1;
+   string Value = 2;
+   string DataType = 3;
+   bool IsSensitive = 4;
+}
+message ImportRequest {
+   string Environment = 1;
+   string Mode = 2;
+   repeated ImportKeyItem Keys = 3;
+}
+message ImportResultResponse {
+   int32 Imported = 1;
+   int32 Skipped = 2;
+   string Message = 3;
+}
+message KeyEntryListResponse {
+   repeated KeyEntryResponse Items = 1;
+}
+message KeyEntryResponse {
+   string Key = 1;
+   string Value = 2;
+   string Environment = 3;
+   string DataType = 4;
+   bool IsSensitive = 5;
+   .bcl.DateTime UpdatedAt = 6;
+}
+message RenameEnvironmentResponse {
+   string Message = 1;
+   int32 UpdatedKeys = 2;
+}
+message RenameRequest {
+   string NewName = 1;
+}
+message TypedKeyEntryListResponse {
+   repeated TypedKeyEntryResponse Items = 1;
+}
+message TypedKeyEntryResponse {
+   string Key = 1;
+   string Value = 2;
+   string ValueType = 3;
+   bool IsSensitive = 4;
+   string Environment = 5;
+   .bcl.DateTime UpdatedAt = 6;
+}
+message UpsertRequest {
+   string Key = 1;
+   string Value = 2;
+   string Environment = 3;
+   string DataType = 4;
+   bool IsSensitive = 5;
+}
+

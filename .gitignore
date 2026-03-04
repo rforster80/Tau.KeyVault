@@ -1,0 +1,98 @@
+# ═══════════════════════════════════════════════════════════
+#  Tau Key Vault — .gitignore
+# ═══════════════════════════════════════════════════════════
+
+# ── C# / .NET ────────────────────────────────────────────
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.cache
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+PublishProfiles/
+launchSettings.json
+
+# NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+
+# ── SQLite database ──────────────────────────────────────
+keyvault.db
+keyvault.db-shm
+keyvault.db-wal
+
+# ── Node.js (JS client) ─────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+package-lock.json
+yarn.lock
+
+# ── Python (Python client) ───────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# ── Go (Go client) ───────────────────────────────────────
+go.sum
+
+# ── Protobuf generated files ─────────────────────────────
+wwwroot/proto/
+
+# ── OS files ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Secrets / environment ────────────────────────────────
+appsettings.Development.json
+appsettings.Production.json
+*.pfx
+*.key
+*.pem
+.env
+.env.*

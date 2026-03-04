@@ -1,0 +1,23 @@
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Data Source=keyvault.db"
+  },
+  "ApiKeys": [
+    "DERIV2026"
+  ],
+  "AppTitle": "Tau Key Vault",
+  "Theme": {
+    "Mode": "Light",
+    "OfficeColor": "Default"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*",
+  "Encryption": {
+    "Salt": "/wrrUIGnqoQ4s4VfCz51mzCf5aprkIvTAXd7RWzbr7Y="
+  }
+}
