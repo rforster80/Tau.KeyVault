@@ -100,3 +100,4 @@ appsettings.Production.json
 # ── Publish Scripts ──────────────────────────────────────
 publish-nuget.ps1
 publish-nuget.sh
+nuget_version.txt
