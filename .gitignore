@@ -96,3 +96,7 @@ appsettings.Production.json
 *.pem
 .env
 .env.*
+
+# ── Publish Scripts ──────────────────────────────────────
+publish-nuget.ps1
+publish-nuget.sh
