@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Tau.KeyVault.Client</RootNamespace>
     <Description>Client library for the Tau Key Vault API. Supports JSON and Protocol Buffers transport with typed helpers for all key-value data types.</Description>
+    <PackageId>Tau.KeyVault.Client</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Renier Forster</Authors>
+    <Company>Tau Inventions (Pty) Ltd.</Company>
+    <Description>Client library for the key vault manager</Description>
+    <PackageTags>key vault, client</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
