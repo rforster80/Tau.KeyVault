@@ -43,8 +43,8 @@ builder.Services.AddFluentUIComponents();
 // API controllers + Protobuf formatters + Swagger
 builder.Services.AddControllers(options =>
 {
-    options.InputFormatters.Insert(0, new ProtobufInputFormatter());
-    options.OutputFormatters.Insert(0, new ProtobufOutputFormatter());
+    options.InputFormatters.Add(new ProtobufInputFormatter());
+    options.OutputFormatters.Add(new ProtobufOutputFormatter());
 });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
