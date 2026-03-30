@@ -77,6 +77,7 @@ export class KeyVaultClient {
 
   /**
    * List all keys for an environment with global fallback.
+   * When no environment is specified, uses the default environment (global if not configured).
    * @param {object} [opts]
    * @param {string} [opts.environment]
    * @param {boolean} [opts.raw=false]
@@ -87,6 +88,16 @@ export class KeyVaultClient {
     const env = environment ?? this._defaultEnvironment;
     const url = `api/keys?environment=${enc(env)}&raw=${raw}`;
     return this._sendGet(url, Proto.KeyEntryListResponse, signal);
+  }
+
+  /**
+   * List all keys across all environments (no filtering).
+   * @param {object} [opts]
+   * @param {AbortSignal} [opts.signal]
+   * @returns {Promise<{items: KeyEntryResponse[]}>}
+   */
+  async getAllKeysAllEnvironments({ signal } = {}) {
+    return this._sendGet('api/keys/all', Proto.KeyEntryListResponse, signal);
   }
 
   /**

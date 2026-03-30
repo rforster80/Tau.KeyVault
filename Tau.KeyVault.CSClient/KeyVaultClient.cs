@@ -68,6 +68,7 @@ public class KeyVaultClient
 
     /// <summary>
     /// List all keys for an environment with global fallback.
+    /// When no environment is specified, uses the default environment (global if not configured).
     /// </summary>
     public async Task<KeyEntryListResponse> GetAllKeysAsync(
         string? environment = null, bool raw = false, CancellationToken ct = default)
@@ -75,6 +76,14 @@ public class KeyVaultClient
         var env = environment ?? _options.DefaultEnvironment;
         var url = $"api/keys?environment={Uri.EscapeDataString(env)}&raw={raw}";
         return await SendGetAsync<KeyEntryListResponse>(url, ct);
+    }
+
+    /// <summary>
+    /// List all keys across all environments (no filtering).
+    /// </summary>
+    public async Task<KeyEntryListResponse> GetAllKeysAllEnvironmentsAsync(CancellationToken ct = default)
+    {
+        return await SendGetAsync<KeyEntryListResponse>("api/keys/all", ct);
     }
 
     /// <summary>

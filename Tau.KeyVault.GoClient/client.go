@@ -91,6 +91,11 @@ func (c *Client) GetAllKeys(ctx context.Context, environment *string, raw bool) 
 	return sendGet(c, ctx, path, decodeKeyEntryListResponse)
 }
 
+// GetAllKeysAllEnvironments lists all keys across all environments (no filtering).
+func (c *Client) GetAllKeysAllEnvironments(ctx context.Context) (*KeyEntryListResponse, error) {
+	return sendGet(c, ctx, "api/keys/all", decodeKeyEntryListResponse)
+}
+
 // GetKey gets a single key by name with global fallback.
 func (c *Client) GetKey(ctx context.Context, key string, environment *string) (*KeyEntryResponse, error) {
 	env := c.env(environment)
