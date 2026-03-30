@@ -143,6 +143,7 @@ export declare class KeyVaultClient {
 
   // ── Core API ─────────────────────────────────────────
   getAllKeys(opts?: EnvOpts & { raw?: boolean }): Promise<KeyEntryListResponse>;
+  getAllKeysAllEnvironments(opts?: SignalOpts): Promise<KeyEntryListResponse>;
   getKey(key: string, opts?: EnvOpts): Promise<KeyEntryResponse>;
   upsertKey(key: string, value: string, opts?: UpsertOpts): Promise<KeyEntryResponse>;
 

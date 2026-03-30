@@ -187,10 +187,17 @@ class KeyVaultClient:
         environment: str | None = None,
         raw: bool = False,
     ) -> KeyEntryListResponse:
-        """List all keys for an environment with global fallback."""
+        """List all keys for an environment with global fallback.
+
+        When no environment is specified, uses the default environment (global if not configured).
+        """
         env = environment if environment is not None else self._default_environment
         url = f"api/keys?environment={quote(env)}&raw={str(raw).lower()}"
         return self._send_get(url, _key_entry_list_from_json, _proto.decode_key_entry_list_response)
+
+    def get_all_keys_all_environments(self) -> KeyEntryListResponse:
+        """List all keys across all environments (no filtering)."""
+        return self._send_get("api/keys/all", _key_entry_list_from_json, _proto.decode_key_entry_list_response)
 
     def get_key(
         self,

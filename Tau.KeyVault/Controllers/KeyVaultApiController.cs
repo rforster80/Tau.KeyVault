@@ -31,32 +31,32 @@ public class KeyVaultApiController : ControllerBase
 
     /// <summary>
     /// List all keys for an environment (with global fallback).
+    /// When no environment is specified, returns keys for the global (blank) environment.
     /// </summary>
     [HttpGet]
     [ProducesResponseType(typeof(KeyEntryListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll([FromQuery] string? environment, [FromQuery] bool raw = false)
     {
+        var env = environment ?? "";
         List<KeyEntry> keys;
 
-        if (raw || environment is null)
-            keys = await _vault.GetKeysAsync(environment);
+        if (raw)
+            keys = await _vault.GetKeysAsync(env);
         else
-            keys = await _vault.ResolveAllKeysAsync(environment);
+            keys = await _vault.ResolveAllKeysAsync(env);
 
-        var response = new KeyEntryListResponse
-        {
-            Items = keys.Select(k => new KeyEntryResponse
-            {
-                Key = k.Key,
-                Value = k.Value,
-                Environment = k.Environment,
-                DataType = k.DataType.ToString(),
-                IsSensitive = k.IsSensitive,
-                UpdatedAt = k.UpdatedAt
-            }).ToList()
-        };
+        return Ok(ToKeyEntryListResponse(keys));
+    }
 
-        return Ok(response);
+    /// <summary>
+    /// List all keys across all environments (no filtering).
+    /// </summary>
+    [HttpGet("all")]
+    [ProducesResponseType(typeof(KeyEntryListResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAllEnvironments()
+    {
+        var keys = await _vault.GetKeysAsync(null);
+        return Ok(ToKeyEntryListResponse(keys));
     }
 
     /// <summary>
@@ -182,17 +182,19 @@ public class KeyVaultApiController : ControllerBase
 
     /// <summary>
     /// List all keys with values returned as their native data types.
+    /// When no environment is specified, returns keys for the global (blank) environment.
     /// </summary>
     [HttpGet("typed")]
     [ProducesResponseType(typeof(TypedKeyEntryListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllTyped([FromQuery] string? environment, [FromQuery] bool raw = false)
     {
+        var env = environment ?? "";
         List<KeyEntry> keys;
 
-        if (raw || environment is null)
-            keys = await _vault.GetKeysAsync(environment);
+        if (raw)
+            keys = await _vault.GetKeysAsync(env);
         else
-            keys = await _vault.ResolveAllKeysAsync(environment);
+            keys = await _vault.ResolveAllKeysAsync(env);
 
         // For protobuf: always return string values with ValueType indicators
         if (IsProtobufRequest())
@@ -213,6 +215,43 @@ public class KeyVaultApiController : ControllerBase
         }
 
         // JSON: return native typed values (backward compatible)
+        return Ok(keys.Select(k => new
+        {
+            k.Key,
+            Value = ConvertToTypedValue(k.Value, k.DataType),
+            ValueType = k.DataType.ToString(),
+            k.IsSensitive,
+            k.Environment,
+            k.UpdatedAt
+        }));
+    }
+
+    /// <summary>
+    /// List all keys across all environments with values returned as their native data types (no filtering).
+    /// </summary>
+    [HttpGet("typed/all")]
+    [ProducesResponseType(typeof(TypedKeyEntryListResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAllTypedAllEnvironments()
+    {
+        var keys = await _vault.GetKeysAsync(null);
+
+        if (IsProtobufRequest())
+        {
+            var response = new TypedKeyEntryListResponse
+            {
+                Items = keys.Select(k => new TypedKeyEntryResponse
+                {
+                    Key = k.Key,
+                    Value = k.Value,
+                    ValueType = k.DataType.ToString(),
+                    IsSensitive = k.IsSensitive,
+                    Environment = k.Environment,
+                    UpdatedAt = k.UpdatedAt
+                }).ToList()
+            };
+            return Ok(response);
+        }
+
         return Ok(keys.Select(k => new
         {
             k.Key,
@@ -385,6 +424,20 @@ public class KeyVaultApiController : ControllerBase
     // ───────────────────────────────────────────────
     //  Helpers
     // ───────────────────────────────────────────────
+
+    private static KeyEntryListResponse ToKeyEntryListResponse(List<KeyEntry> keys) =>
+        new()
+        {
+            Items = keys.Select(k => new KeyEntryResponse
+            {
+                Key = k.Key,
+                Value = k.Value,
+                Environment = k.Environment,
+                DataType = k.DataType.ToString(),
+                IsSensitive = k.IsSensitive,
+                UpdatedAt = k.UpdatedAt
+            }).ToList()
+        };
 
     /// <summary>
     /// Checks whether the current request expects protobuf response.
