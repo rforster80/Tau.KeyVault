@@ -18,12 +18,23 @@ public class KeyVaultApiController : ControllerBase
 {
     private readonly KeyVaultService _vault;
     private readonly NotificationDispatchService _dispatch;
+    private readonly CallerScopeAccessor _scopes;
 
-    public KeyVaultApiController(KeyVaultService vault, NotificationDispatchService dispatch)
+    public KeyVaultApiController(KeyVaultService vault, NotificationDispatchService dispatch,
+        CallerScopeAccessor scopes)
     {
         _vault = vault;
         _dispatch = dispatch;
+        _scopes = scopes;
     }
+
+    /// <summary>
+    /// The environment a request actually targets. A request that names one keeps it, and the
+    /// service refuses it if the caller's credential cannot reach it. A request that names none
+    /// falls to the caller's own environment, so a bound credential need not repeat itself and
+    /// never silently addresses Global.
+    /// </summary>
+    private string ScopedEnv(string? requested) => requested ?? _scopes.Current.DefaultEnvironment;
 
     // ───────────────────────────────────────────────
     //  Standard endpoints (Value always returned as string)
@@ -37,7 +48,7 @@ public class KeyVaultApiController : ControllerBase
     [ProducesResponseType(typeof(KeyEntryListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll([FromQuery] string? environment, [FromQuery] bool raw = false)
     {
-        var env = environment ?? "";
+        var env = ScopedEnv(environment);
         List<KeyEntry> keys;
 
         if (raw)
@@ -55,7 +66,13 @@ public class KeyVaultApiController : ControllerBase
     [ProducesResponseType(typeof(KeyEntryListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllEnvironments()
     {
-        var keys = await _vault.GetKeysAsync(null);
+        // For a bound credential "all environments" is its own: returning that rather than
+        // refusing keeps caching clients working without disclosing that others exist.
+        var scope = _scopes.Current;
+        var keys = scope.IsGlobal
+            ? await _vault.GetKeysAsync(null)
+            : await _vault.GetKeysAsync(scope.Environment);
+
         return Ok(ToKeyEntryListResponse(keys));
     }
 
@@ -65,11 +82,12 @@ public class KeyVaultApiController : ControllerBase
     [HttpGet("{key}")]
     [ProducesResponseType(typeof(KeyEntryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Get(string key, [FromQuery] string environment = "")
+    public async Task<IActionResult> Get(string key, [FromQuery] string? environment = null)
     {
-        var entry = await _vault.ResolveKeyAsync(key, environment);
+        var env = ScopedEnv(environment);
+        var entry = await _vault.ResolveKeyAsync(key, env);
         if (entry is null)
-            return NotFound(new ErrorResponse { Error = $"Key '{key}' not found for environment '{environment}' (including global fallback)." });
+            return NotFound(new ErrorResponse { Error = $"Key '{key}' not found for environment '{env}'{(_vault.FailoverAllowed ? " (including global fallback)" : " (no global fallback for this caller)")}." });
 
         return Ok(new KeyEntryResponse
         {
@@ -111,7 +129,7 @@ public class KeyVaultApiController : ControllerBase
             var entry = await _vault.UpsertKeyAsync(
                 request.Key,
                 request.Value ?? "",
-                request.Environment ?? "",
+                ScopedEnv(request.Environment),
                 dataType,
                 request.IsSensitive ?? false);
 
@@ -134,6 +152,37 @@ public class KeyVaultApiController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Delete a single key from one environment.
+    /// </summary>
+    /// <remarks>
+    /// Unlike GET, this does NOT fall back to the global environment. A key that
+    /// exists only globally is left untouched when a named environment is requested,
+    /// and the response is 404 — otherwise deleting from one environment could silently
+    /// remove the value every other environment inherits. Omit environment (or pass it
+    /// blank) to delete the global entry itself.
+    /// </remarks>
+    [HttpDelete("{key}")]
+    [ProducesResponseType(typeof(DeleteKeyResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteKey(string key, [FromQuery] string? environment = null)
+    {
+        var env = KeyVaultService.NormalizeEnvironment(ScopedEnv(environment));
+
+        if (!await _vault.DeleteKeyAsync(key, env))
+            return NotFound(new ErrorResponse { Error = $"Key '{key}' not found in environment '{env}' (delete does not fall back to global)." });
+
+        // Dispatch notifications (errors are logged internally, never thrown)
+        await _dispatch.DispatchAsync(env, key);
+
+        return Ok(new DeleteKeyResponse
+        {
+            Message = $"Key '{key}' deleted from environment '{env}'.",
+            Key = key,
+            Environment = env
+        });
+    }
+
     // ───────────────────────────────────────────────
     //  Typed endpoints (Value returned as native type)
     // ───────────────────────────────────────────────
@@ -148,11 +197,12 @@ public class KeyVaultApiController : ControllerBase
     [HttpGet("typed/{key}")]
     [ProducesResponseType(typeof(TypedKeyEntryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetTyped(string key, [FromQuery] string environment = "")
+    public async Task<IActionResult> GetTyped(string key, [FromQuery] string? environment = null)
     {
-        var entry = await _vault.ResolveKeyAsync(key, environment);
+        var env = ScopedEnv(environment);
+        var entry = await _vault.ResolveKeyAsync(key, env);
         if (entry is null)
-            return NotFound(new ErrorResponse { Error = $"Key '{key}' not found for environment '{environment}' (including global fallback)." });
+            return NotFound(new ErrorResponse { Error = $"Key '{key}' not found for environment '{env}'{(_vault.FailoverAllowed ? " (including global fallback)" : " (no global fallback for this caller)")}." });
 
         // For protobuf: always return string value with ValueType indicator
         if (IsProtobufRequest())
@@ -188,7 +238,7 @@ public class KeyVaultApiController : ControllerBase
     [ProducesResponseType(typeof(TypedKeyEntryListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllTyped([FromQuery] string? environment, [FromQuery] bool raw = false)
     {
-        var env = environment ?? "";
+        var env = ScopedEnv(environment);
         List<KeyEntry> keys;
 
         if (raw)
@@ -233,7 +283,10 @@ public class KeyVaultApiController : ControllerBase
     [ProducesResponseType(typeof(TypedKeyEntryListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAllTypedAllEnvironments()
     {
-        var keys = await _vault.GetKeysAsync(null);
+        var scope = _scopes.Current;
+        var keys = scope.IsGlobal
+            ? await _vault.GetKeysAsync(null)
+            : await _vault.GetKeysAsync(scope.Environment);
 
         if (IsProtobufRequest())
         {
@@ -339,9 +392,9 @@ public class KeyVaultApiController : ControllerBase
     /// </summary>
     [HttpGet("export")]
     [ProducesResponseType(typeof(ExportPayloadResponse), StatusCodes.Status200OK)]
-    public async Task<IActionResult> ExportEnvironment([FromQuery] string environment = "")
+    public async Task<IActionResult> ExportEnvironment([FromQuery] string? environment = null)
     {
-        var payload = await _vault.ExportEnvironmentAsync(environment);
+        var payload = await _vault.ExportEnvironmentAsync(ScopedEnv(environment));
         return Ok(new ExportPayloadResponse
         {
             Version = payload.Version,
@@ -386,7 +439,7 @@ public class KeyVaultApiController : ControllerBase
                 .ToList();
 
             var (imported, skipped) = await _vault.ImportKeysAsync(
-                request.Environment ?? "", exportKeys, mode);
+                ScopedEnv(request.Environment), exportKeys, mode);
 
             return Ok(new ImportResultResponse
             {

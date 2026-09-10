@@ -122,6 +122,111 @@ public class KeyVaultClient
     // ─────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Delete a single key from one environment.
+    /// Does NOT fall back to global: a key that exists only in the global environment
+    /// is left untouched and the server responds 404.
+    /// </summary>
+    public async Task<DeleteKeyResponse> DeleteKeyAsync(
+        string key, string? environment = null, CancellationToken ct = default)
+    {
+        var env = environment ?? _options.DefaultEnvironment;
+        var url = $"api/keys/{Uri.EscapeDataString(key)}?environment={Uri.EscapeDataString(env)}";
+        return await SendDeleteAsync<DeleteKeyResponse>(url, ct);
+    }
+
+    // ─────────────────────────────────────────────────────────
+    //  Per-environment API credentials (Global callers only)
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// List per-environment credentials. Secrets are never returned.
+    /// Requires a Global API key and <c>EnableAPIKeyPerEnvironment</c> on the server.
+    /// </summary>
+    public async Task<ApiKeyListResponse> ListApiKeysAsync(CancellationToken ct = default)
+        => await SendGetAsync<ApiKeyListResponse>("api/apikeys", ct);
+
+    /// <summary>
+    /// Mint a credential bound to one environment. The returned <see cref="ApiKeySecretResponse.Key"/>
+    /// is shown once and cannot be recovered afterwards — store it immediately.
+    /// </summary>
+    public async Task<ApiKeySecretResponse> CreateApiKeyAsync(
+        string name, string environment, CancellationToken ct = default)
+        => await SendPostAsync<CreateApiKeyRequest, ApiKeySecretResponse>(
+            "api/apikeys", new CreateApiKeyRequest { Name = name, Environment = environment }, ct);
+
+    /// <summary>
+    /// Replace a credential's secret, keeping its name and environment binding.
+    /// The previous key stops working immediately; the new one is shown once.
+    /// </summary>
+    public async Task<ApiKeySecretResponse> RotateApiKeyAsync(int id, CancellationToken ct = default)
+        // Rotate takes no body, but the protobuf transport cannot serialize a bare object,
+        // so send an (ignored) contract type — matching the other clients.
+        => await SendPostAsync<UpdateApiKeyRequest, ApiKeySecretResponse>(
+            $"api/apikeys/{id}/rotate", new UpdateApiKeyRequest(), ct);
+
+    /// <summary>Enable or disable a credential without deleting it.</summary>
+    public async Task<ApiKeyResponse> SetApiKeyEnabledAsync(
+        int id, bool enabled, CancellationToken ct = default)
+        => await SendPutAsync<UpdateApiKeyRequest, ApiKeyResponse>(
+            $"api/apikeys/{id}", new UpdateApiKeyRequest { Enabled = enabled }, ct);
+
+    /// <summary>Permanently remove a credential.</summary>
+    public async Task<RevokeApiKeyResponse> RevokeApiKeyAsync(int id, CancellationToken ct = default)
+        => await SendDeleteAsync<RevokeApiKeyResponse>($"api/apikeys/{id}", ct);
+
+    // ─────────────────────────────────────────────────────────
+    //  Access audit log
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Query the vault's access audit log, newest first. All filters are optional and
+    /// combine with AND. Values are never recorded and never returned.
+    /// </summary>
+    /// <param name="key">Exact key name; collection-level actions have a blank key.</param>
+    /// <param name="environment">Environment filter; pass an empty string to match Global.</param>
+    /// <param name="actorId">API key name or admin username.</param>
+    /// <param name="action">Restrict to one action.</param>
+    /// <param name="outcome">Restrict to one outcome.</param>
+    /// <param name="from">Inclusive lower bound on timestamp (UTC).</param>
+    /// <param name="to">Inclusive upper bound on timestamp (UTC).</param>
+    /// <param name="limit">Page size, 1-1000. Defaults to 100 server-side.</param>
+    /// <param name="offset">Rows to skip.</param>
+    public async Task<AuditEntryListResponse> GetAuditLogAsync(
+        string? key = null,
+        string? environment = null,
+        string? actorId = null,
+        KeyVaultAuditAction? action = null,
+        KeyVaultAuditOutcome? outcome = null,
+        DateTime? from = null,
+        DateTime? to = null,
+        int? limit = null,
+        int? offset = null,
+        CancellationToken ct = default)
+    {
+        var q = new List<string>();
+        if (key is not null) q.Add($"key={Uri.EscapeDataString(key)}");
+        if (environment is not null) q.Add($"environment={Uri.EscapeDataString(environment)}");
+        if (actorId is not null) q.Add($"actorId={Uri.EscapeDataString(actorId)}");
+        if (action is not null) q.Add($"action={action}");
+        if (outcome is not null) q.Add($"outcome={outcome}");
+        if (from is not null) q.Add($"from={Uri.EscapeDataString(from.Value.ToString("o", CultureInfo.InvariantCulture))}");
+        if (to is not null) q.Add($"to={Uri.EscapeDataString(to.Value.ToString("o", CultureInfo.InvariantCulture))}");
+        if (limit is not null) q.Add($"limit={limit}");
+        if (offset is not null) q.Add($"offset={offset}");
+
+        var url = "api/audit" + (q.Count > 0 ? "?" + string.Join("&", q) : "");
+        return await SendGetAsync<AuditEntryListResponse>(url, ct);
+    }
+
+    /// <summary>
+    /// Convenience wrapper for the erasure-evidence question: every audit row for one key,
+    /// including the DeleteKey row that evidences its destruction.
+    /// </summary>
+    public async Task<AuditEntryListResponse> GetKeyAuditTrailAsync(
+        string key, string? environment = null, int? limit = null, CancellationToken ct = default)
+        => await GetAuditLogAsync(key: key, environment: environment, limit: limit, ct: ct);
+
+    /// <summary>
     /// List all known environments.
     /// </summary>
     public async Task<EnvironmentListResponse> GetEnvironmentsAsync(CancellationToken ct = default)

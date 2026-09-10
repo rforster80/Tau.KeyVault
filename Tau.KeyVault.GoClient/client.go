@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -117,6 +118,99 @@ func (c *Client) UpsertKey(
 		DataType: string(dataType), IsSensitive: isSensitive,
 	}
 	return sendPut(c, ctx, "api/keys", req, encodeUpsertRequest, decodeKeyEntryResponse)
+}
+
+// DeleteKey deletes a single key from one environment.
+// It does NOT fall back to global: a key that exists only in the global
+// environment is left untouched and the server responds 404.
+func (c *Client) DeleteKey(ctx context.Context, key string, environment *string) (*DeleteKeyResponse, error) {
+	env := c.env(environment)
+	path := fmt.Sprintf("api/keys/%s?environment=%s", url.PathEscape(key), url.QueryEscape(env))
+	return sendDelete(c, ctx, path, decodeDeleteKeyResponse)
+}
+
+// ListApiKeys lists per-environment credentials. Secrets are never returned.
+//
+// Requires a Global API key and EnableAPIKeyPerEnvironment on the server.
+func (c *Client) ListApiKeys(ctx context.Context) (*ApiKeyListResponse, error) {
+	return sendGet(c, ctx, "api/apikeys", decodeApiKeyListResponse)
+}
+
+// CreateApiKey mints a credential bound to one environment. The returned Key is
+// shown once and cannot be recovered afterwards — store it immediately.
+func (c *Client) CreateApiKey(ctx context.Context, name, environment string) (*ApiKeySecretResponse, error) {
+	req := &createApiKeyRequest{Name: name, Environment: environment}
+	return sendPost(c, ctx, "api/apikeys", req, encodeCreateApiKeyRequest, decodeApiKeySecretResponse)
+}
+
+// RotateApiKey replaces a credential's secret, keeping its name and environment
+// binding. The previous key stops working immediately.
+func (c *Client) RotateApiKey(ctx context.Context, id int) (*ApiKeySecretResponse, error) {
+	path := fmt.Sprintf("api/apikeys/%d/rotate", id)
+	req := &updateApiKeyRequest{}
+	return sendPost(c, ctx, path, req, encodeUpdateApiKeyRequest, decodeApiKeySecretResponse)
+}
+
+// SetApiKeyEnabled enables or disables a credential without deleting it.
+func (c *Client) SetApiKeyEnabled(ctx context.Context, id int, enabled bool) (*ApiKeyResponse, error) {
+	path := fmt.Sprintf("api/apikeys/%d", id)
+	req := &updateApiKeyRequest{Enabled: enabled}
+	return sendPut(c, ctx, path, req, encodeUpdateApiKeyRequest, decodeApiKeyResponse)
+}
+
+// RevokeApiKey permanently removes a credential.
+func (c *Client) RevokeApiKey(ctx context.Context, id int) (*RevokeApiKeyResponse, error) {
+	path := fmt.Sprintf("api/apikeys/%d", id)
+	return sendDelete(c, ctx, path, decodeRevokeApiKeyResponse)
+}
+
+// GetAuditLog queries the vault's access audit log, newest first.
+//
+// All AuditQuery fields are optional and combine with AND. Values are never
+// recorded and never returned. Pass nil for no filtering.
+func (c *Client) GetAuditLog(ctx context.Context, q *AuditQuery) (*AuditEntryListResponse, error) {
+	values := url.Values{}
+	if q != nil {
+		if q.Key != nil {
+			values.Set("key", *q.Key)
+		}
+		if q.Environment != nil {
+			values.Set("environment", *q.Environment)
+		}
+		if q.ActorID != nil {
+			values.Set("actorId", *q.ActorID)
+		}
+		if q.Action != nil {
+			values.Set("action", *q.Action)
+		}
+		if q.Outcome != nil {
+			values.Set("outcome", *q.Outcome)
+		}
+		if q.From != nil {
+			values.Set("from", q.From.UTC().Format(time.RFC3339))
+		}
+		if q.To != nil {
+			values.Set("to", q.To.UTC().Format(time.RFC3339))
+		}
+		if q.Limit != nil {
+			values.Set("limit", strconv.Itoa(*q.Limit))
+		}
+		if q.Offset != nil {
+			values.Set("offset", strconv.Itoa(*q.Offset))
+		}
+	}
+
+	path := "api/audit"
+	if len(values) > 0 {
+		path += "?" + values.Encode()
+	}
+	return sendGet(c, ctx, path, decodeAuditEntryListResponse)
+}
+
+// GetKeyAuditTrail returns every audit row for one key, including the DeleteKey
+// row that evidences its destruction.
+func (c *Client) GetKeyAuditTrail(ctx context.Context, key string, environment *string) (*AuditEntryListResponse, error) {
+	return c.GetAuditLog(ctx, &AuditQuery{Key: &key, Environment: environment})
 }
 
 // GetEnvironments lists all known environments.
@@ -248,7 +342,7 @@ func sendDelete[T any](
 ) (*T, error) {
 	switch c.transport {
 	case TransportProtobuf:
-		return execGet(c, ctx, path, true, protoDecode) // DELETE uses same pattern as GET (no body)
+		return execDelete(c, ctx, path, true, protoDecode)
 	case TransportProtobufWithAPIFallback:
 		r, err := execDelete(c, ctx, path, true, protoDecode)
 		if err == nil {

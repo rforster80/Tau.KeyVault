@@ -3,7 +3,8 @@ namespace Tau.KeyVault.Models;
 public enum NotificationType
 {
     Nats = 0,
-    Webhook = 1
+    Webhook = 1,
+    Kafka = 2
 }
 
 public class NotificationLog
@@ -14,7 +15,8 @@ public class NotificationLog
     public NotificationType Type { get; set; }
 
     /// <summary>
-    /// The resolved target (NATS server+queue or webhook URL after placeholder resolution).
+    /// The resolved target (NATS server+queue, Kafka brokers+topic, or webhook URL
+    /// after placeholder resolution).
     /// </summary>
     public string Target { get; set; } = string.Empty;
 
@@ -22,7 +24,7 @@ public class NotificationLog
     public string? ErrorMessage { get; set; }
 
     /// <summary>
-    /// HTTP status code for webhooks, or 0 for NATS.
+    /// HTTP status code for webhooks, or 0 for NATS and Kafka.
     /// </summary>
     public int StatusCode { get; set; }
 

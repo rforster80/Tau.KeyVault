@@ -1,6 +1,6 @@
 # Tau Key Vault
 
-A self-hosted key-value configuration store built with .NET 10, Blazor Server, and Microsoft Fluent UI. Provides a REST API and web-based admin interface for managing application configuration across multiple environments, with support for 9 typed data values, import/export, NATS and webhook notifications, and Protocol Buffers serialization.
+A self-hosted key-value configuration store built with .NET 10, Blazor Server, and Microsoft Fluent UI. Provides a REST API and web-based admin interface for managing application configuration across multiple environments, with support for 9 typed data values, import/export, NATS, Kafka and webhook notifications, and Protocol Buffers serialization.
 
 ## Repository Structure
 
@@ -11,6 +11,7 @@ Tau.KeyVault/
 ├── Tau.KeyVault.JsClient/   # JavaScript/TypeScript client library (ESM)
 ├── Tau.KeyVault.PyClient/   # Python client library
 ├── Tau.KeyVault.GoClient/   # Go client library
+├── Tau.KeyVault.SaltRecovery/  # Console tool to recover a lost encryption salt
 ├── .gitignore
 └── README.md                # ← you are here
 ```
@@ -21,14 +22,20 @@ The server project at `Tau.KeyVault/` is a .NET 10 Blazor Server application tha
 
 ### Key Features
 
-- **Environment-scoped keys** with a Global fallback — if a key is not found in a specific environment, the Global value is returned automatically
+- **Environment-scoped keys** with a Global fallback — if a key is not found in a specific environment, the Global value is returned. Switchable off with `GlobalKeyFailover`, and never applied to an environment-bound API credential
 - **9 data types** — Text, Code (uppercase), Numeric, Boolean, Date, Time, DateTime, Json, Csv
+- **Encrypted at rest** — every key value is AES-256 encrypted in the database; the salt is generated on first run and recoverable with the bundled Salt Recovery tool
 - **Sensitive data masking** — mark keys as sensitive to hide values in the UI
 - **Import/Export** — bulk import and export keys per environment as JSON (Add Missing, Overwrite, Clean Import modes)
-- **NATS & Webhook notifications** — per-environment notification channels with audit logging
+- **NATS, Kafka & Webhook notifications** — per-environment notification channels with audit logging
 - **Protocol Buffers** — all API endpoints support protobuf via `Accept: application/x-protobuf` header, with an auto-generated `.proto` schema
 - **Customizable theming** — Light, Dark, and System modes with Microsoft Office accent colors
-- **SQLite persistence** — zero-dependency database with automatic migrations
+- **SQLite or Postgres** — SQLite by default for dependency-free docker runs; set `UseSqlite: false` for Postgres. Each provider has its own migration set
+- **Per-environment API credentials** — off by default (`EnableAPIKeyPerEnvironment`); each credential is bound to one environment, independently rotatable, and sees nothing outside it
+- **Admin UI for everything** — audit log browser, API credential management, and a read-only runtime configuration panel, alongside the existing key, notification and settings pages
+- **Access audit log** — durable record of who read, wrote or deleted which key, when, and from where; never the value. Fail-closed: an operation that cannot be audited is refused
+- **Named API keys** — `ApiKeys` accepts `{ "Name", "Key" }` objects (plain strings still work) so the audit trail can name the credential
+- **Configurable global failover** — `GlobalKeyFailover: false` stops environment lookups resolving to the Global value
 - **Swagger/OpenAPI** — interactive API docs at `/swagger`
 
 ### Quick Start
@@ -42,15 +49,32 @@ Navigate to `http://localhost:5000` and log in with `admin` / `admin`. Change th
 
 ### API Authentication
 
-All API requests require the `X-Api-Key` header. API keys are configured in `appsettings.json` under the `ApiKeys` array.
+All API requests require the `X-Api-Key` header.
+
+**Global keys** are configured in `appsettings.json` under `ApiKeys`, which accepts either a
+plain string or a `{ "Name": "...", "Key": "..." }` object. Naming them is what lets the audit
+log say which credential acted. Rotating one means editing the file and restarting.
+
+**Environment-bound keys** are optional (`EnableAPIKeyPerEnvironment`, off by default), stored
+hashed in the database, and managed through `/api/apikeys`. Each is bound to exactly one
+environment, sees only that environment with no Global fallback, cannot administer environments
+or other credentials, and is rotatable without a restart.
 
 ### API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/keys?environment=&raw=false` | List all keys with global fallback |
+| GET | `/api/keys/all` | List all keys across every environment (no filtering) |
 | GET | `/api/keys/{key}?environment=` | Get a single key |
 | PUT | `/api/keys` | Create or update a key |
+| DELETE | `/api/keys/{key}?environment=` | Delete a single key (no global fallback) |
+| GET | `/api/audit?key=&actorId=&action=&…` | Query the access audit log |
+| GET | `/api/apikeys` | List per-environment API credentials (Global only) |
+| POST | `/api/apikeys` | Mint a credential bound to one environment; secret returned once |
+| POST | `/api/apikeys/{id}/rotate` | Replace a credential's secret |
+| PUT | `/api/apikeys/{id}` | Enable or disable a credential |
+| DELETE | `/api/apikeys/{id}` | Revoke a credential |
 | GET | `/api/keys/environments` | List all environments |
 | DELETE | `/api/keys/environments/{env}` | Delete an environment |
 | PUT | `/api/keys/environments/{env}/rename` | Rename an environment |
@@ -59,10 +83,25 @@ All API requests require the `X-Api-Key` header. API keys are configured in `app
 | GET | `/api/keys/proto` | Download the .proto schema |
 | GET | `/api/keys/typed/{key}?environment=` | Get a typed key value |
 | GET | `/api/keys/typed?environment=` | List all typed key values |
+| GET | `/api/keys/typed/all` | List all typed key values across every environment |
 
 ### Protocol Buffers
 
 Request protobuf responses by adding the `Accept: application/x-protobuf` header. Send protobuf request bodies with `Content-Type: application/x-protobuf`. The `.proto` schema is auto-generated at startup and downloadable from `/api/keys/proto` or as a static file at `/proto/keyvault.proto`.
+
+## Salt Recovery Tool
+
+`Tau.KeyVault.SaltRecovery/` is a standalone console app that recovers the encryption salt
+from the database if `appsettings.json` is lost or reset. Without the salt, encrypted values
+cannot be read.
+
+```bash
+cd Tau.KeyVault.SaltRecovery
+dotnet run -- --db ../Tau.KeyVault/keyvault.db
+```
+
+See [`Tau.KeyVault.SaltRecovery/README.md`](Tau.KeyVault.SaltRecovery/README.md) for the full
+recovery procedure.
 
 ## Client Libraries
 
@@ -72,13 +111,34 @@ All four client libraries provide the same feature set, mirroring the full REST 
 
 Every client library includes:
 
-- **Full API coverage** — all swagger endpoints (get/set keys, environments, export/import, proto schema)
+- **Full API coverage** — all swagger endpoints (get/set/delete keys, environments, export/import, proto schema, audit log, API credentials)
 - **Key exists** — check if a key exists (returns bool, catches 404)
+- **Delete a key** — remove a single key from one environment; never falls back to Global
+- **Access audit log** — query who read, wrote or deleted which key and when, including a per-key trail for erasure evidence
+- **API credential management** — mint, rotate, suspend and revoke environment-bound credentials (Global callers only)
 - **Typed getters** — `GetText`, `GetCode`, `GetNumeric`, `GetBoolean`, `GetDate`, `GetTime`, `GetDateTime`, `GetJson`, `GetCsv`
 - **Typed updaters** — `UpdateText`, `UpdateCode` (auto-uppercase), `UpdateNumeric`, `UpdateBoolean`, `UpdateDate`, `UpdateTime`, `UpdateDateTime`, `UpdateJson`, `UpdateCsv`
 - **GetOrCreate pattern** — get a typed value, creating the key with a default if it doesn't exist. Supports an optional `isSensitive` flag
 - **CSV list management** — `CsvAdd`, `CsvRemove`, `CsvContains`, `CsvReplace` for managing comma-separated list values
 - **3 transport modes** — API (JSON), Protobuf, and Protobuf-with-API-fallback
+
+### Publishing
+
+Each client ships a `sample_publish-*.sh` helper: copy it (and its `sample_*_version.txt`) to
+the un-prefixed name — those are gitignored — fill in your registry and token, and run it. Each
+one bumps the patch in its version file, syncs the package manifest, builds and publishes.
+
+| Client | Script | Publishes by |
+|--------|--------|--------------|
+| C# | `sample_publish-nuget.sh`, `sample_publish-nuget.ps1` | `dotnet pack` + `dotnet nuget push` |
+| JavaScript | `sample_publish-npm.sh` | `npm publish` (token via a transient `.npmrc`) |
+| Python | `sample_publish-pypi.sh` | `python -m build` + `twine upload` |
+| Go | `sample_publish-gomodule.sh` | a pushed semver git tag — Go has no registry upload |
+
+The JS, Python and Go scripts take `-n` for a dry run that builds the artefact and then leaves
+the tree byte-for-byte as it found it. The Go script tags locally and pushes nothing without
+`-p`, and refuses to tag unless `gofmt`, `go vet`, `go build` and `go test` pass — a pushed tag
+is immutable once the module proxy has seen it.
 
 ### C# Client (`Tau.KeyVault.CSClient`)
 
@@ -161,11 +221,11 @@ See [`Tau.KeyVault.PyClient/README.md`](Tau.KeyVault.PyClient/README.md) for ful
 Go 1.22+ client with zero external dependencies — includes a hand-rolled protobuf codec and uses the standard library `net/http`. All methods accept `context.Context`.
 
 ```bash
-go get github.com/tau-keyvault/keyvault
+go get github.com/rforster80/Tau.KeyVault/Tau.KeyVault.GoClient
 ```
 
 ```go
-import kv "github.com/tau-keyvault/keyvault"
+import kv "github.com/rforster80/Tau.KeyVault/Tau.KeyVault.GoClient"
 
 client, _ := kv.NewClient(kv.Options{
     BaseURL:   "https://localhost:5001",

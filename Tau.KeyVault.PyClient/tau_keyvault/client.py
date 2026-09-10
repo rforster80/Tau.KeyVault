@@ -19,6 +19,13 @@ from .enums import KeyVaultDataType, KeyVaultTransport
 from .errors import KeyVaultApiError
 from .models import (
     DeleteEnvironmentResponse,
+    DeleteKeyResponse,
+    AuditEntryResponse,
+    AuditEntryListResponse,
+    ApiKeyResponse,
+    ApiKeyListResponse,
+    ApiKeySecretResponse,
+    RevokeApiKeyResponse,
     EnvironmentListResponse,
     ExportKeyItemResponse,
     ExportPayloadResponse,
@@ -67,6 +74,67 @@ def _delete_env_from_json(data: dict) -> DeleteEnvironmentResponse:
     return DeleteEnvironmentResponse(
         message=data.get("message", ""),
         deleted_keys=data.get("deletedKeys", 0),
+    )
+
+
+def _api_key_from_json(data: dict) -> ApiKeyResponse:
+    return ApiKeyResponse(
+        id=data.get("id", 0),
+        name=data.get("name", ""),
+        environment=data.get("environment", ""),
+        enabled=data.get("enabled", False),
+        created_at=data.get("createdAt", ""),
+        last_rotated_at=data.get("lastRotatedAt", ""),
+    )
+
+
+def _api_key_list_from_json(data: dict) -> ApiKeyListResponse:
+    return ApiKeyListResponse(items=[_api_key_from_json(i) for i in data.get("items", [])])
+
+
+def _api_key_secret_from_json(data: dict) -> ApiKeySecretResponse:
+    return ApiKeySecretResponse(
+        id=data.get("id", 0),
+        name=data.get("name", ""),
+        environment=data.get("environment", ""),
+        key=data.get("key", ""),
+        message=data.get("message", ""),
+    )
+
+
+def _revoke_api_key_from_json(data: dict) -> RevokeApiKeyResponse:
+    return RevokeApiKeyResponse(message=data.get("message", ""), id=data.get("id", 0))
+
+
+def _audit_entry_from_json(data: dict) -> AuditEntryResponse:
+    return AuditEntryResponse(
+        timestamp=data.get("timestamp", ""),
+        action=data.get("action", ""),
+        key=data.get("key", ""),
+        environment=data.get("environment", ""),
+        actor_type=data.get("actorType", ""),
+        actor_id=data.get("actorId", ""),
+        outcome=data.get("outcome", ""),
+        ip_address=data.get("ipAddress", ""),
+        item_count=data.get("itemCount", 0),
+        id=data.get("id", 0),
+    )
+
+
+def _audit_list_from_json(data: dict) -> AuditEntryListResponse:
+    return AuditEntryListResponse(
+        items=[_audit_entry_from_json(i) for i in data.get("items", [])],
+        total_count=data.get("totalCount", 0),
+        limit=data.get("limit", 0),
+        offset=data.get("offset", 0),
+    )
+
+
+def _delete_key_from_json(data: dict) -> DeleteKeyResponse:
+    return DeleteKeyResponse(
+        message=data.get("message", ""),
+        key=data.get("key", ""),
+        environment=data.get("environment", ""),
     )
 
 
@@ -237,6 +305,114 @@ class KeyVaultClient:
         )
 
     # ── Environments ──────────────────────────────────────
+
+    def delete_key(
+        self, key: str, environment: str | None = None,
+    ) -> DeleteKeyResponse:
+        """Delete a single key from one environment.
+
+        Does NOT fall back to global: a key that exists only in the global
+        environment is left untouched and the server responds 404.
+        """
+        env = environment if environment is not None else self._default_environment
+        url = f"api/keys/{quote(key)}?environment={quote(env)}"
+        return self._send_delete(url, _delete_key_from_json, _proto.decode_delete_key_response)
+
+    # ── Per-environment API credentials (Global callers only) ──
+
+    def list_api_keys(self) -> ApiKeyListResponse:
+        """List per-environment credentials. Secrets are never returned.
+
+        Requires a Global API key and ``EnableAPIKeyPerEnvironment`` on the server.
+        """
+        return self._send_get("api/apikeys", _api_key_list_from_json,
+                              _proto.decode_api_key_list_response)
+
+    def create_api_key(self, name: str, environment: str) -> ApiKeySecretResponse:
+        """Mint a credential bound to one environment.
+
+        The returned ``key`` is shown once and cannot be recovered afterwards.
+        """
+        return self._send_post(
+            "api/apikeys", {"name": name, "environment": environment},
+            lambda: _proto.encode_create_api_key_request(name, environment),
+            _api_key_secret_from_json, _proto.decode_api_key_secret_response,
+        )
+
+    def rotate_api_key(self, id: int) -> ApiKeySecretResponse:
+        """Replace a credential's secret. The previous key stops working immediately."""
+        return self._send_post(
+            f"api/apikeys/{id}/rotate", {},
+            lambda: b"",
+            _api_key_secret_from_json, _proto.decode_api_key_secret_response,
+        )
+
+    def set_api_key_enabled(self, id: int, enabled: bool) -> ApiKeyResponse:
+        """Enable or disable a credential without deleting it."""
+        return self._send_put(
+            f"api/apikeys/{id}", {"enabled": enabled},
+            lambda: _proto.encode_update_api_key_request(enabled),
+            _api_key_from_json, _proto.decode_api_key_response,
+        )
+
+    def revoke_api_key(self, id: int) -> RevokeApiKeyResponse:
+        """Permanently remove a credential."""
+        return self._send_delete(f"api/apikeys/{id}", _revoke_api_key_from_json,
+                                 _proto.decode_revoke_api_key_response)
+
+    # ── Access audit log ──────────────────────────────────
+
+    def get_audit_log(
+        self,
+        key: str | None = None,
+        environment: str | None = None,
+        actor_id: str | None = None,
+        action: str | None = None,
+        outcome: str | None = None,
+        from_: datetime | str | None = None,
+        to: datetime | str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> AuditEntryListResponse:
+        """Query the vault's access audit log, newest first.
+
+        All filters are optional and combine with AND. Values are never
+        recorded and never returned.
+
+        ``environment=""`` matches Global. ``actor_id`` is an API key name or an
+        admin username, never an API key.
+        """
+        def iso(v):
+            return v.isoformat() if isinstance(v, datetime) else v
+
+        parts: list[str] = []
+        if key is not None:
+            parts.append(f"key={quote(key)}")
+        if environment is not None:
+            parts.append(f"environment={quote(environment)}")
+        if actor_id is not None:
+            parts.append(f"actorId={quote(actor_id)}")
+        if action is not None:
+            parts.append(f"action={quote(str(action))}")
+        if outcome is not None:
+            parts.append(f"outcome={quote(str(outcome))}")
+        if from_ is not None:
+            parts.append(f"from={quote(iso(from_))}")
+        if to is not None:
+            parts.append(f"to={quote(iso(to))}")
+        if limit is not None:
+            parts.append(f"limit={limit}")
+        if offset is not None:
+            parts.append(f"offset={offset}")
+
+        url = "api/audit" + ("?" + "&".join(parts) if parts else "")
+        return self._send_get(url, _audit_list_from_json, _proto.decode_audit_entry_list_response)
+
+    def get_key_audit_trail(
+        self, key: str, environment: str | None = None, limit: int | None = None,
+    ) -> AuditEntryListResponse:
+        """Every audit row for one key, including the DeleteKey row evidencing destruction."""
+        return self.get_audit_log(key=key, environment=environment, limit=limit)
 
     def get_environments(self) -> EnvironmentListResponse:
         """List all known environments."""

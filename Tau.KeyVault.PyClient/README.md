@@ -106,6 +106,9 @@ These map directly to the Tau Key Vault REST API endpoints.
 ```python
 # List all keys (with global fallback)
 result = client.get_all_keys(environment="Production")
+
+# Every key in every environment — the raw dump clients use to build a local cache.
+everything = client.get_all_keys_all_environments()
 for entry in result.items:
     print(entry.key, entry.value)
 
@@ -119,6 +122,19 @@ client.upsert_key(
     data_type=KeyVaultDataType.TEXT,
     is_sensitive=False,
 )
+```
+
+### Deleting a Key
+
+```python
+# Delete one key from one environment.
+deleted = client.delete_key("ConnectionString", environment="PRODUCTION")
+print(f"{deleted.key} removed from {deleted.environment}")
+
+# Unlike a get, a delete never falls back to Global: if the key exists only globally,
+# this raises KeyVaultApiError with a 404 rather than deleting it. Pass an empty
+# environment to delete the global entry itself.
+client.delete_key("ConnectionString", environment="")
 ```
 
 ### Environments
@@ -263,6 +279,83 @@ items = client.csv_replace(
 )
 ```
 
+## Access Audit Log
+
+Every read, write and delete is recorded server-side. Values are never recorded, so
+nothing here can leak a secret.
+
+```python
+from datetime import datetime, timedelta, timezone
+from tau_keyvault import KeyVaultAuditAction, KeyVaultAuditOutcome
+
+# Everything that happened to one key — the erasure-evidence question.
+trail = client.get_key_audit_trail("SubjectEmail")
+for row in trail.items:
+    print(f"{row.timestamp} {row.action:10} {row.actor_type}:{row.actor_id} {row.outcome}")
+
+# Was a specific key actually destroyed?
+erased = client.get_audit_log(key="SubjectEmail", action=KeyVaultAuditAction.DELETE_KEY)
+
+# What has one credential been doing this week?
+by_credential = client.get_audit_log(
+    actor_id="adapter-prod",
+    from_=datetime.now(timezone.utc) - timedelta(days=7),
+    limit=500,
+)
+
+# Rejected credentials — the signal for a leaked key.
+denied = client.get_audit_log(
+    action=KeyVaultAuditAction.AUTH_FAILURE,
+    outcome=KeyVaultAuditOutcome.DENIED,
+)
+print(f"{denied.total_count} rejected attempts")
+```
+
+## Per-Environment API Credentials
+
+Requires a Global API key, and `EnableAPIKeyPerEnvironment` on the server. A credential
+bound to an environment sees only that environment, with no Global fallback.
+
+```python
+# Mint a credential. The secret is returned once and is never retrievable again.
+minted = client.create_api_key("adapter-prod", "PRODUCTION")
+print(f"Store this now: {minted.key}")
+
+# List them — metadata only, never the secret.
+for k in client.list_api_keys().items:
+    print(f"{k.id} {k.name} -> {k.environment} (enabled: {k.enabled})")
+
+# Rotate: the previous secret stops working immediately.
+rotated = client.rotate_api_key(minted.id)
+print(f"New secret: {rotated.key}")
+
+# Suspend without deleting, so the audit trail keeps naming its subject.
+client.set_api_key_enabled(minted.id, False)
+
+# Or remove it permanently.
+client.revoke_api_key(minted.id)
+```
+
+## Publishing
+
+`sample_publish-pypi.sh` builds and uploads the distribution. Copy it to the un-prefixed
+names — `publish-pypi.sh`, `pypi_version.txt` — which are gitignored:
+
+```bash
+cp sample_publish-pypi.sh publish-pypi.sh
+cp sample_pypi_version.txt pypi_version.txt
+
+# build and twine check without uploading
+PYPI_TOKEN=pypi-xxxx ./publish-pypi.sh -n
+
+# upload
+PYPI_TOKEN=pypi-xxxx ./publish-pypi.sh -r "https://upload.pypi.org/legacy/"
+```
+
+It increments the patch in the version file, syncs the `[project] version` in
+`pyproject.toml`, builds an sdist and wheel, runs `twine check`, then uploads with token
+auth (`__token__`).
+
 ## Error Handling
 
 All API errors raise `KeyVaultApiError` with `status_code` and `api_error` attributes.
@@ -307,9 +400,18 @@ The package is fully typed and ships with a `py.typed` marker for PEP 561. All m
 | Method | Description |
 |--------|-------------|
 | `get_all_keys(env?)` | List all keys for an environment |
+| `get_all_keys_all_environments()` | List all keys across every environment (no filtering) |
 | `get_key(key, env?)` | Get a single key by name |
 | `upsert_key(key, value, env?, data_type?, is_sensitive?)` | Create or update a key |
 | `get_environments()` | List all environments |
+| `delete_key(key, environment=None)` | Delete a single key from one environment (no global fallback) |
+| `get_audit_log(...)` | Query the access audit log (filters: key, environment, actor_id, action, outcome, from_, to) |
+| `get_key_audit_trail(key, ...)` | Every audit row for one key, including its erasure evidence |
+| `list_api_keys()` | List per-environment credentials (Global only; secrets never returned) |
+| `create_api_key(name, environment)` | Mint a credential bound to one environment; the key is returned once |
+| `rotate_api_key(id)` | Replace a credential's secret; the previous key stops working immediately |
+| `set_api_key_enabled(id, enabled)` | Suspend or resume a credential without deleting it |
+| `revoke_api_key(id)` | Permanently remove a credential |
 | `delete_environment(env)` | Delete an environment and its keys |
 | `rename_environment(env, new_name)` | Rename an environment |
 | `export(env?)` | Export all keys for an environment |

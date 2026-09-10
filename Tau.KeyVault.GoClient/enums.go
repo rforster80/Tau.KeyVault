@@ -29,3 +29,26 @@ const (
 	DataTypeJSON     DataType = "Json"
 	DataTypeCSV      DataType = "Csv"
 )
+
+// Actions recorded in the access audit log.
+const (
+	AuditActionReadKey           = "ReadKey"
+	AuditActionListKeys          = "ListKeys"
+	AuditActionWriteKey          = "WriteKey"
+	AuditActionDeleteKey         = "DeleteKey"
+	AuditActionListEnvironments  = "ListEnvironments"
+	AuditActionDeleteEnvironment = "DeleteEnvironment"
+	AuditActionRenameEnvironment = "RenameEnvironment"
+	AuditActionExport            = "Export"
+	AuditActionImport            = "Import"
+	AuditActionReadAudit         = "ReadAudit"
+	AuditActionAuthFailure       = "AuthFailure"
+)
+
+// Outcomes of an audited action.
+const (
+	AuditOutcomeSuccess  = "Success"
+	AuditOutcomeNotFound = "NotFound"
+	AuditOutcomeDenied   = "Denied"
+	AuditOutcomeError    = "Error"
+)

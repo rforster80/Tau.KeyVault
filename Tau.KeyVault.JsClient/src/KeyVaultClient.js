@@ -134,6 +134,128 @@ export class KeyVaultClient {
   // ── Environments ───────────────────────────────────────
 
   /**
+   * Delete a single key from one environment.
+   * Does NOT fall back to global: a key that exists only in the global environment
+   * is left untouched and the server responds 404.
+   * @param {string} key
+   * @param {object} [opts]
+   * @param {string} [opts.environment]
+   * @param {AbortSignal} [opts.signal]
+   * @returns {Promise<{message: string, key: string, environment: string}>}
+   */
+  async deleteKey(key, { environment, signal } = {}) {
+    const env = environment ?? this._defaultEnvironment;
+    const url = `api/keys/${enc(key)}?environment=${enc(env)}`;
+    return this._sendDelete(url, Proto.DeleteKeyResponse, signal);
+  }
+
+  // ───────────────────────────────────────────────────────
+  //  Per-environment API credentials (Global callers only)
+  // ───────────────────────────────────────────────────────
+
+  /**
+   * List per-environment credentials. Secrets are never returned.
+   * Requires a Global API key and EnableAPIKeyPerEnvironment on the server.
+   * @param {object} [opts] @param {AbortSignal} [opts.signal]
+   * @returns {Promise<{items: object[]}>}
+   */
+  async listApiKeys({ signal } = {}) {
+    return this._sendGet('api/apikeys', Proto.ApiKeyListResponse, signal);
+  }
+
+  /**
+   * Mint a credential bound to one environment. The returned `key` is shown once and
+   * cannot be recovered afterwards — store it immediately.
+   * @param {string} name
+   * @param {string} environment
+   * @param {object} [opts] @param {AbortSignal} [opts.signal]
+   * @returns {Promise<{id: number, name: string, environment: string, key: string, message: string}>}
+   */
+  async createApiKey(name, environment, { signal } = {}) {
+    return this._sendPost('api/apikeys', { name, environment },
+      Proto.CreateApiKeyRequest, Proto.ApiKeySecretResponse, signal);
+  }
+
+  /**
+   * Replace a credential's secret. The previous key stops working immediately.
+   * @param {number} id
+   * @param {object} [opts] @param {AbortSignal} [opts.signal]
+   */
+  async rotateApiKey(id, { signal } = {}) {
+    return this._sendPost(`api/apikeys/${id}/rotate`, {},
+      Proto.UpdateApiKeyRequest, Proto.ApiKeySecretResponse, signal);
+  }
+
+  /**
+   * Enable or disable a credential without deleting it.
+   * @param {number} id
+   * @param {boolean} enabled
+   * @param {object} [opts] @param {AbortSignal} [opts.signal]
+   */
+  async setApiKeyEnabled(id, enabled, { signal } = {}) {
+    return this._sendPut(`api/apikeys/${id}`, { enabled },
+      Proto.UpdateApiKeyRequest, Proto.ApiKeyResponse, signal);
+  }
+
+  /**
+   * Permanently remove a credential.
+   * @param {number} id
+   * @param {object} [opts] @param {AbortSignal} [opts.signal]
+   */
+  async revokeApiKey(id, { signal } = {}) {
+    return this._sendDelete(`api/apikeys/${id}`, Proto.RevokeApiKeyResponse, signal);
+  }
+
+  // ───────────────────────────────────────────────────────
+  //  Access audit log
+  // ───────────────────────────────────────────────────────
+
+  /**
+   * Query the vault's access audit log, newest first. All filters are optional and
+   * combine with AND. Values are never recorded and never returned.
+   * @param {object} [opts]
+   * @param {string} [opts.key]          Exact key name; collection actions have a blank key
+   * @param {string} [opts.environment]  Empty string matches Global
+   * @param {string} [opts.actorId]      API key name or admin username
+   * @param {string} [opts.action]       See KeyVaultAuditAction
+   * @param {string} [opts.outcome]      See KeyVaultAuditOutcome
+   * @param {Date|string} [opts.from]    Inclusive lower bound (UTC)
+   * @param {Date|string} [opts.to]      Inclusive upper bound (UTC)
+   * @param {number} [opts.limit]        Page size, 1-1000
+   * @param {number} [opts.offset]
+   * @param {AbortSignal} [opts.signal]
+   * @returns {Promise<{items: object[], totalCount: number, limit: number, offset: number}>}
+   */
+  async getAuditLog({ key, environment, actorId, action, outcome, from, to, limit, offset, signal } = {}) {
+    const iso = (v) => (v instanceof Date ? v.toISOString() : v);
+    const parts = [];
+    if (key !== undefined) parts.push(`key=${enc(key)}`);
+    if (environment !== undefined) parts.push(`environment=${enc(environment)}`);
+    if (actorId !== undefined) parts.push(`actorId=${enc(actorId)}`);
+    if (action !== undefined) parts.push(`action=${enc(action)}`);
+    if (outcome !== undefined) parts.push(`outcome=${enc(outcome)}`);
+    if (from !== undefined) parts.push(`from=${enc(iso(from))}`);
+    if (to !== undefined) parts.push(`to=${enc(iso(to))}`);
+    if (limit !== undefined) parts.push(`limit=${limit}`);
+    if (offset !== undefined) parts.push(`offset=${offset}`);
+
+    const url = `api/audit${parts.length ? `?${parts.join('&')}` : ''}`;
+    return this._sendGet(url, Proto.AuditEntryListResponse, signal);
+  }
+
+  /**
+   * Every audit row for one key, including the DeleteKey row evidencing its destruction.
+   * @param {string} key
+   * @param {object} [opts]
+   * @param {string} [opts.environment]
+   * @param {number} [opts.limit]
+   * @param {AbortSignal} [opts.signal]
+   */
+  async getKeyAuditTrail(key, { environment, limit, signal } = {}) {
+    return this.getAuditLog({ key, environment, limit, signal });
+  }
+
+  /**
    * List all known environments.
    * @param {object} [opts]
    * @param {AbortSignal} [opts.signal]

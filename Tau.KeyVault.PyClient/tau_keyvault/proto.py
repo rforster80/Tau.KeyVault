@@ -67,6 +67,73 @@ def _build_file_descriptor() -> descriptor_pb2.FileDescriptorProto:
         (2, "deleted_keys", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
     ])
 
+    _add_message(f, "ApiKeyResponse", [
+        (1, "id", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+        (2, "name", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (3, "environment", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (4, "enabled", descriptor_pb2.FieldDescriptorProto.TYPE_BOOL),
+        (5, "created_at", descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE, "bcl_DateTime"),
+        (6, "last_rotated_at", descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE, "bcl_DateTime"),
+    ])
+
+    _add_message(f, "ApiKeyListResponse", [
+        (1, "items", descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE, "ApiKeyResponse",
+         descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED),
+    ])
+
+    # The only message that ever carries a credential secret, and only on create/rotate.
+    _add_message(f, "ApiKeySecretResponse", [
+        (1, "id", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+        (2, "name", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (3, "environment", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (4, "key", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (5, "message", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+    ])
+
+    _add_message(f, "RevokeApiKeyResponse", [
+        (1, "message", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (2, "id", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+    ])
+
+    _add_message(f, "CreateApiKeyRequest", [
+        (1, "name", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (2, "environment", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+    ])
+
+    _add_message(f, "UpdateApiKeyRequest", [
+        (1, "enabled", descriptor_pb2.FieldDescriptorProto.TYPE_BOOL),
+    ])
+
+    # Audit rows carry no value field, by design. timestamp is protobuf-net's
+    # bcl.DateTime surrogate and stays opaque here, exactly as updated_at does
+    # elsewhere in this codec — use the API transport when you need it as a string.
+    _add_message(f, "AuditEntryResponse", [
+        (1, "timestamp", descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE, "bcl_DateTime"),
+        (2, "action", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (3, "key", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (4, "environment", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (5, "actor_type", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (6, "actor_id", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (7, "outcome", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (8, "ip_address", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (9, "item_count", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+        (10, "id", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+    ])
+
+    _add_message(f, "AuditEntryListResponse", [
+        (1, "items", descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE, "AuditEntryResponse",
+         descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED),
+        (2, "total_count", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+        (3, "limit", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+        (4, "offset", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
+    ])
+
+    _add_message(f, "DeleteKeyResponse", [
+        (1, "message", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (2, "key", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+        (3, "environment", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
+    ])
+
     _add_message(f, "RenameEnvironmentResponse", [
         (1, "message", descriptor_pb2.FieldDescriptorProto.TYPE_STRING),
         (2, "updated_keys", descriptor_pb2.FieldDescriptorProto.TYPE_INT32),
@@ -174,6 +241,15 @@ _PbKeyEntryResponse = _make_class("tau.keyvault.KeyEntryResponse")
 _PbKeyEntryListResponse = _make_class("tau.keyvault.KeyEntryListResponse")
 _PbEnvironmentListResponse = _make_class("tau.keyvault.EnvironmentListResponse")
 _PbDeleteEnvironmentResponse = _make_class("tau.keyvault.DeleteEnvironmentResponse")
+_PbDeleteKeyResponse = _make_class("tau.keyvault.DeleteKeyResponse")
+_PbAuditEntryResponse = _make_class("tau.keyvault.AuditEntryResponse")
+_PbAuditEntryListResponse = _make_class("tau.keyvault.AuditEntryListResponse")
+_PbApiKeyResponse = _make_class("tau.keyvault.ApiKeyResponse")
+_PbApiKeyListResponse = _make_class("tau.keyvault.ApiKeyListResponse")
+_PbApiKeySecretResponse = _make_class("tau.keyvault.ApiKeySecretResponse")
+_PbRevokeApiKeyResponse = _make_class("tau.keyvault.RevokeApiKeyResponse")
+_PbCreateApiKeyRequest = _make_class("tau.keyvault.CreateApiKeyRequest")
+_PbUpdateApiKeyRequest = _make_class("tau.keyvault.UpdateApiKeyRequest")
 _PbRenameEnvironmentResponse = _make_class("tau.keyvault.RenameEnvironmentResponse")
 _PbExportKeyItemResponse = _make_class("tau.keyvault.ExportKeyItemResponse")
 _PbExportPayloadResponse = _make_class("tau.keyvault.ExportPayloadResponse")
@@ -230,6 +306,90 @@ def decode_delete_environment_response(data: bytes) -> models.DeleteEnvironmentR
     pb = _PbDeleteEnvironmentResponse()
     pb.ParseFromString(data)
     return models.DeleteEnvironmentResponse(message=pb.message, deleted_keys=pb.deleted_keys)
+
+
+def _audit_entry_from_pb(pb) -> models.AuditEntryResponse:
+    return models.AuditEntryResponse(
+        timestamp="",  # bcl.DateTime is opaque; string is preferred via JSON
+        action=pb.action,
+        key=pb.key,
+        environment=pb.environment,
+        actor_type=pb.actor_type,
+        actor_id=pb.actor_id,
+        outcome=pb.outcome,
+        ip_address=pb.ip_address,
+        item_count=pb.item_count,
+        id=pb.id,
+    )
+
+
+def _api_key_from_pb(pb) -> models.ApiKeyResponse:
+    return models.ApiKeyResponse(
+        id=pb.id,
+        name=pb.name,
+        environment=pb.environment,
+        enabled=pb.enabled,
+        created_at="",       # bcl.DateTime is opaque; string is preferred via JSON
+        last_rotated_at="",
+    )
+
+
+def decode_api_key_list_response(data: bytes) -> models.ApiKeyListResponse:
+    pb = _PbApiKeyListResponse()
+    pb.ParseFromString(data)
+    return models.ApiKeyListResponse(items=[_api_key_from_pb(i) for i in pb.items])
+
+
+def decode_api_key_response(data: bytes) -> models.ApiKeyResponse:
+    pb = _PbApiKeyResponse()
+    pb.ParseFromString(data)
+    return _api_key_from_pb(pb)
+
+
+def decode_api_key_secret_response(data: bytes) -> models.ApiKeySecretResponse:
+    pb = _PbApiKeySecretResponse()
+    pb.ParseFromString(data)
+    return models.ApiKeySecretResponse(
+        id=pb.id, name=pb.name, environment=pb.environment, key=pb.key, message=pb.message
+    )
+
+
+def decode_revoke_api_key_response(data: bytes) -> models.RevokeApiKeyResponse:
+    pb = _PbRevokeApiKeyResponse()
+    pb.ParseFromString(data)
+    return models.RevokeApiKeyResponse(message=pb.message, id=pb.id)
+
+
+def encode_create_api_key_request(name: str, environment: str) -> bytes:
+    pb = _PbCreateApiKeyRequest()
+    pb.name = name
+    pb.environment = environment
+    return pb.SerializeToString()
+
+
+def encode_update_api_key_request(enabled: bool) -> bytes:
+    pb = _PbUpdateApiKeyRequest()
+    pb.enabled = enabled
+    return pb.SerializeToString()
+
+
+def decode_audit_entry_list_response(data: bytes) -> models.AuditEntryListResponse:
+    pb = _PbAuditEntryListResponse()
+    pb.ParseFromString(data)
+    return models.AuditEntryListResponse(
+        items=[_audit_entry_from_pb(i) for i in pb.items],
+        total_count=pb.total_count,
+        limit=pb.limit,
+        offset=pb.offset,
+    )
+
+
+def decode_delete_key_response(data: bytes) -> models.DeleteKeyResponse:
+    pb = _PbDeleteKeyResponse()
+    pb.ParseFromString(data)
+    return models.DeleteKeyResponse(
+        message=pb.message, key=pb.key, environment=pb.environment
+    )
 
 
 def decode_rename_environment_response(data: bytes) -> models.RenameEnvironmentResponse:

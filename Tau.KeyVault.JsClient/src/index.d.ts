@@ -26,6 +26,33 @@ export declare const KeyVaultDataType: {
 export type KeyVaultDataTypeValue =
   (typeof KeyVaultDataType)[keyof typeof KeyVaultDataType];
 
+export declare const KeyVaultAuditAction: {
+  readonly ReadKey: 'ReadKey';
+  readonly ListKeys: 'ListKeys';
+  readonly WriteKey: 'WriteKey';
+  readonly DeleteKey: 'DeleteKey';
+  readonly ListEnvironments: 'ListEnvironments';
+  readonly DeleteEnvironment: 'DeleteEnvironment';
+  readonly RenameEnvironment: 'RenameEnvironment';
+  readonly Export: 'Export';
+  readonly Import: 'Import';
+  readonly ReadAudit: 'ReadAudit';
+  readonly AuthFailure: 'AuthFailure';
+};
+
+export type KeyVaultAuditActionValue =
+  (typeof KeyVaultAuditAction)[keyof typeof KeyVaultAuditAction];
+
+export declare const KeyVaultAuditOutcome: {
+  readonly Success: 'Success';
+  readonly NotFound: 'NotFound';
+  readonly Denied: 'Denied';
+  readonly Error: 'Error';
+};
+
+export type KeyVaultAuditOutcomeValue =
+  (typeof KeyVaultAuditOutcome)[keyof typeof KeyVaultAuditOutcome];
+
 // ── Error ────────────────────────────────────────────────
 
 export declare class KeyVaultApiError extends Error {
@@ -73,6 +100,73 @@ export interface EnvironmentListResponse {
 export interface DeleteEnvironmentResponse {
   message: string;
   deletedKeys: number;
+}
+
+export interface ApiKeyResponse {
+  id: number;
+  name: string;
+  environment: string;
+  enabled: boolean;
+  createdAt: string;
+  lastRotatedAt: string;
+}
+
+export interface ApiKeyListResponse {
+  items: ApiKeyResponse[];
+}
+
+/** Returned by create and rotate only; the secret is never retrievable afterwards. */
+export interface ApiKeySecretResponse {
+  id: number;
+  name: string;
+  environment: string;
+  /** Store this now; it is never shown again. */
+  key: string;
+  message: string;
+}
+
+export interface RevokeApiKeyResponse {
+  message: string;
+  id: number;
+}
+
+export interface AuditEntryResponse {
+  timestamp: string;
+  action: string;
+  key: string;
+  environment: string;
+  actorType: string;
+  /** API key name or admin username. Never the API key itself. */
+  actorId: string;
+  outcome: string;
+  ipAddress: string;
+  itemCount: number;
+  id: number;
+}
+
+export interface AuditEntryListResponse {
+  items: AuditEntryResponse[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AuditQueryOpts extends SignalOpts {
+  key?: string;
+  environment?: string;
+  actorId?: string;
+  action?: string;
+  outcome?: string;
+  from?: Date | string;
+  to?: Date | string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface DeleteKeyResponse {
+  message: string;
+  key: string;
+  environment: string;
 }
 
 export interface RenameEnvironmentResponse {
@@ -148,6 +242,16 @@ export declare class KeyVaultClient {
   upsertKey(key: string, value: string, opts?: UpsertOpts): Promise<KeyEntryResponse>;
 
   getEnvironments(opts?: SignalOpts): Promise<EnvironmentListResponse>;
+  deleteKey(key: string, opts?: EnvOpts): Promise<DeleteKeyResponse>;
+
+  listApiKeys(opts?: SignalOpts): Promise<ApiKeyListResponse>;
+  createApiKey(name: string, environment: string, opts?: SignalOpts): Promise<ApiKeySecretResponse>;
+  rotateApiKey(id: number, opts?: SignalOpts): Promise<ApiKeySecretResponse>;
+  setApiKeyEnabled(id: number, enabled: boolean, opts?: SignalOpts): Promise<ApiKeyResponse>;
+  revokeApiKey(id: number, opts?: SignalOpts): Promise<RevokeApiKeyResponse>;
+
+  getAuditLog(opts?: AuditQueryOpts): Promise<AuditEntryListResponse>;
+  getKeyAuditTrail(key: string, opts?: { environment?: string; limit?: number } & SignalOpts): Promise<AuditEntryListResponse>;
   deleteEnvironment(environment: string, opts?: SignalOpts): Promise<DeleteEnvironmentResponse>;
   renameEnvironment(environment: string, newName: string, opts?: SignalOpts): Promise<RenameEnvironmentResponse>;
 

@@ -103,3 +103,12 @@ VERSION
 publish-nuget.ps1
 publish-nuget.sh
 nuget_version.txt
+# Real publish helpers, copied from their sample_ counterparts and filled in
+publish-npm.sh
+npm_version.txt
+publish-pypi.sh
+pypi_version.txt
+publish-gomodule.sh
+go_version.txt
+# npm auth written transiently by publish-npm.sh
+.npmrc

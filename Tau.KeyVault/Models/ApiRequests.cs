@@ -38,3 +38,19 @@ public class ImportKeyItem
     [ProtoMember(3)] public string DataType { get; set; } = "Text";
     [ProtoMember(4)] public bool IsSensitive { get; set; }
 }
+
+/// <summary>Mint a credential bound to one environment.</summary>
+[ProtoContract]
+public class CreateApiKeyRequest
+{
+    [ProtoMember(1)] public string Name { get; set; } = string.Empty;
+    /// <summary>Must be a named environment; Global access comes from appsettings.json.</summary>
+    [ProtoMember(2)] public string Environment { get; set; } = string.Empty;
+}
+
+/// <summary>Enable or disable a credential without deleting it.</summary>
+[ProtoContract]
+public class UpdateApiKeyRequest
+{
+    [ProtoMember(1)] public bool Enabled { get; set; }
+}

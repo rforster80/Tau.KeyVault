@@ -1,0 +1,351 @@
+@page "/apikeys"
+@attribute [Authorize]
+@inject ApiKeyService Keys
+@inject AuditService AuditSvc
+@inject AuditActorAccessor Actor
+@inject KeyVaultService Vault
+@inject AppSettingsService AppSettings
+@inject IToastService ToastService
+@using Tau.KeyVault.Models
+@using Tau.KeyVault.Services
+
+<PageTitle>API Credentials — @_appTitle</PageTitle>
+
+<div style="display:flex; align-items:center; margin-bottom:1rem;">
+    <h1 style="margin:0;">API Credentials</h1>
+</div>
+
+@if (!Keys.Enabled)
+{
+    <div class="empty-state-card">
+        <p style="margin:0; font-weight:500;">Per-environment API credentials are disabled</p>
+        <p style="margin:0.5rem 0 0; font-size:0.9rem; color:var(--neutral-foreground-hint);">
+            Set <code>"EnableAPIKeyPerEnvironment": true</code> in <code>appsettings.json</code> and restart
+            the application to manage credentials here.
+        </p>
+        <p style="margin:0.5rem 0 0; font-size:0.9rem; color:var(--neutral-foreground-hint);">
+            Global API keys stay in the <code>ApiKeys</code> array in <code>appsettings.json</code>; rotating
+            one is a configuration change plus a restart.
+        </p>
+    </div>
+}
+else
+{
+    <p style="margin:0 0 1rem; color:var(--neutral-foreground-hint); font-size:0.9rem;">
+        Each credential is bound to exactly one environment and sees only that environment — no Global
+        fallback, no environment administration, and no access to this page. Secrets are stored hashed
+        and shown once, at creation and rotation.
+    </p>
+
+    <div class="notif-section">
+        <div class="notif-section-header">
+            <h3>Credentials</h3>
+            <FluentButton Appearance="Appearance.Accent" OnClick="ShowCreateDialog"
+                          IconStart="@(new Icons.Regular.Size16.Add())">Create Credential</FluentButton>
+        </div>
+
+        @if (_credentials.Count == 0)
+        {
+            <div class="empty-state-card">
+                <p style="margin:0; font-weight:500;">No credentials yet</p>
+                <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+                    Click <strong>Create Credential</strong> to mint one bound to a single environment.
+                </p>
+            </div>
+        }
+        else
+        {
+            <div class="kv-grid-wrapper">
+                <table class="kv-grid">
+                    <thead>
+                        <tr>
+                            <th style="width:24%;">Name</th>
+                            <th style="width:16%;">Environment</th>
+                            <th style="width:10%;">Status</th>
+                            <th style="width:16%;">Created (UTC)</th>
+                            <th style="width:16%;">Last rotated</th>
+                            <th class="kv-grid-actions-col" style="width:18%;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in _credentials)
+                        {
+                            <tr>
+                                <td class="kv-grid-key">@c.Name</td>
+                                <td class="kv-grid-value"><span class="kv-type-badge kv-type-code">@c.Environment</span></td>
+                                <td>
+                                    @if (c.Enabled)
+                                    {
+                                        <span class="kv-type-badge kv-type-numeric">Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="kv-type-badge kv-type-text">Disabled</span>
+                                    }
+                                </td>
+                                <td class="kv-grid-value"><code style="font-size:0.75rem;">@c.CreatedAt.ToString("yyyy-MM-dd HH:mm")</code></td>
+                                <td class="kv-grid-value">
+                                    <code style="font-size:0.75rem;">
+                                        @(c.LastRotatedAt is null ? "never" : c.LastRotatedAt.Value.ToString("yyyy-MM-dd HH:mm"))
+                                    </code>
+                                </td>
+                                <td class="kv-grid-actions-col">
+                                    <FluentButton Appearance="Appearance.Outline" OnClick="() => RotateCredential(c)"
+                                                  IconStart="@(new Icons.Regular.Size16.ArrowSync())"
+                                                  Title="Rotate — issues a new secret and invalidates the current one" />
+                                    <FluentButton Appearance="Appearance.Outline" OnClick="() => ToggleEnabled(c)"
+                                                  Style="margin-left:0.25rem;"
+                                                  IconStart="@(c.Enabled
+                                                      ? (Icon)new Icons.Regular.Size16.Pause()
+                                                      : (Icon)new Icons.Regular.Size16.Play())"
+                                                  Title="@(c.Enabled ? "Disable" : "Enable")" />
+                                    <FluentButton Appearance="Appearance.Outline" OnClick="() => RevokeCredential(c)"
+                                                  Style="color: var(--error-foreground, #d13438); margin-left:0.25rem;"
+                                                  IconStart="@(new Icons.Regular.Size16.Delete())"
+                                                  Title="Revoke permanently" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+}
+
+<!-- Create dialog -->
+@if (_showCreateDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseCreateDialog">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation>
+            <div class="dialog-header">
+                <h3>Create Credential</h3>
+            </div>
+            <div class="dialog-body">
+                <div class="form-group">
+                    <label class="form-label">Name</label>
+                    <FluentTextField @bind-Value="_newName" Placeholder="adapter-prod" Style="width:100%;" />
+                    <div class="notif-preview">This is what the audit log records as the actor. The key itself is never stored.</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Environment</label>
+                    <FluentSelect TOption="string" Value="@_newEnvironment" ValueChanged="@(v => _newEnvironment = v)"
+                                  Style="width:100%;">
+                        <FluentOption Value="@("")">— select an environment —</FluentOption>
+                        @foreach (var env in _environments.Where(e => !string.IsNullOrEmpty(e)))
+                        {
+                            <FluentOption Value="@env">@env</FluentOption>
+                        }
+                    </FluentSelect>
+                    <div class="notif-preview">
+                        A credential binds to exactly one environment. Global access comes from the
+                        <code>ApiKeys</code> array in <code>appsettings.json</code>, not from here.
+                    </div>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseCreateDialog">Cancel</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" OnClick="CreateCredential">Create</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Secret reveal — the only time the key is ever shown -->
+@if (_showSecretDialog)
+{
+    <div class="dialog-overlay">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation>
+            <div class="dialog-header">
+                <h3>@_secretTitle</h3>
+            </div>
+            <div class="dialog-body">
+                <div class="secret-callout">
+                    <strong>Copy this now — it cannot be shown again.</strong>
+                    The vault stores only a hash, so a lost key must be rotated, not recovered.
+                </div>
+                <div class="form-group">
+                    <label class="form-label">@_secretName → @_secretEnvironment</label>
+                    <FluentTextField Value="@_secretValue" ReadOnly="true" Style="width:100%; font-family:monospace;" />
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Accent" OnClick="CloseSecretDialog">I have stored it</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Confirmation -->
+@if (_showConfirm)
+{
+    <div class="dialog-overlay" @onclick="() => _showConfirm = false">
+        <div class="dialog-panel dialog-panel-sm" @onclick:stopPropagation>
+            <div class="dialog-header"><h3>@_confirmTitle</h3></div>
+            <div class="dialog-body"><p style="margin:0;">@_confirmMessage</p></div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Outline" OnClick="() => _showConfirm = false">Cancel</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" OnClick="ConfirmAction">@_confirmVerb</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string _appTitle = "Tau Key Vault";
+    private List<EnvironmentApiKey> _credentials = new();
+    private List<string> _environments = new();
+
+    private bool _showCreateDialog;
+    private string _newName = "";
+    private string _newEnvironment = "";
+
+    private bool _showSecretDialog;
+    private string _secretTitle = "";
+    private string _secretName = "";
+    private string _secretEnvironment = "";
+    private string _secretValue = "";
+
+    private bool _showConfirm;
+    private string _confirmTitle = "";
+    private string _confirmMessage = "";
+    private string _confirmVerb = "Confirm";
+    private Func<Task>? _confirmCallback;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _appTitle = await AppSettings.GetAppTitleAsync();
+        if (Keys.Enabled) await Load();
+    }
+
+    private async Task Load()
+    {
+        _credentials = await Keys.ListAsync();
+        _environments = await Vault.GetEnvironmentsAsync();
+    }
+
+    private async Task AuditAsync(AuditAction action, string name, string environment)
+    {
+        var actor = await Actor.GetAsync();
+        await AuditSvc.WriteAsync(action, actor.Type, actor.Id, key: name, environment: environment,
+            ipAddress: actor.IpAddress, itemCount: 1);
+    }
+
+    private void ShowCreateDialog()
+    {
+        _newName = "";
+        _newEnvironment = "";
+        _showCreateDialog = true;
+    }
+
+    private void CloseCreateDialog() => _showCreateDialog = false;
+
+    private async Task CreateCredential()
+    {
+        if (string.IsNullOrWhiteSpace(_newName))
+        {
+            ToastService.ShowWarning("A name is required.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_newEnvironment))
+        {
+            ToastService.ShowWarning("Select the environment this credential is bound to.");
+            return;
+        }
+
+        try
+        {
+            // Audit before minting: an unrecordable credential must not come into existence.
+            await AuditAsync(AuditAction.CreateApiKey, _newName, KeyVaultService.NormalizeEnvironment(_newEnvironment));
+            var minted = await Keys.CreateAsync(_newName, _newEnvironment);
+
+            _showCreateDialog = false;
+            RevealSecret("Credential Created", minted);
+            await Load();
+        }
+        catch (InvalidOperationException ex)
+        {
+            ToastService.ShowWarning(ex.Message);
+        }
+    }
+
+    private void RotateCredential(EnvironmentApiKey c)
+    {
+        ShowConfirm("Rotate Credential",
+            $"Issue a new secret for \"{c.Name}\"? The current key stops working immediately.",
+            "Rotate", async () =>
+        {
+            await AuditAsync(AuditAction.RotateApiKey, c.Name, c.Environment);
+            var rotated = await Keys.RotateAsync(c.Id);
+            if (rotated is null)
+            {
+                ToastService.ShowWarning("Credential no longer exists.");
+                await Load();
+                return;
+            }
+            RevealSecret("Credential Rotated", rotated.Value);
+            await Load();
+        });
+    }
+
+    private void ToggleEnabled(EnvironmentApiKey c)
+    {
+        var verb = c.Enabled ? "Disable" : "Enable";
+        ShowConfirm($"{verb} Credential",
+            c.Enabled
+                ? $"Disable \"{c.Name}\"? It stops authenticating immediately, but is kept so the audit trail still names it."
+                : $"Enable \"{c.Name}\"? It can authenticate again straight away.",
+            verb, async () =>
+        {
+            await AuditAsync(AuditAction.UpdateApiKey, c.Name, c.Environment);
+            await Keys.SetEnabledAsync(c.Id, !c.Enabled);
+            ToastService.ShowSuccess($"Credential {verb.ToLowerInvariant()}d.");
+            await Load();
+        });
+    }
+
+    private void RevokeCredential(EnvironmentApiKey c)
+    {
+        ShowConfirm("Revoke Credential",
+            $"Permanently remove \"{c.Name}\" ({c.Environment})? This cannot be undone. " +
+            "Disable it instead if you want the audit trail to keep naming its subject.",
+            "Revoke", async () =>
+        {
+            await AuditAsync(AuditAction.RevokeApiKey, c.Name, c.Environment);
+            await Keys.RevokeAsync(c.Id);
+            ToastService.ShowSuccess($"Credential \"{c.Name}\" revoked.");
+            await Load();
+        });
+    }
+
+    private void RevealSecret(string title, MintedApiKey minted)
+    {
+        _secretTitle = title;
+        _secretName = minted.Record.Name;
+        _secretEnvironment = minted.Record.Environment;
+        _secretValue = minted.PlaintextKey;
+        _showSecretDialog = true;
+    }
+
+    private void CloseSecretDialog()
+    {
+        // Drop the plaintext from component state as soon as the operator dismisses it.
+        _secretValue = "";
+        _showSecretDialog = false;
+    }
+
+    private void ShowConfirm(string title, string message, string verb, Func<Task> callback)
+    {
+        _confirmTitle = title;
+        _confirmMessage = message;
+        _confirmVerb = verb;
+        _confirmCallback = callback;
+        _showConfirm = true;
+    }
+
+    private async Task ConfirmAction()
+    {
+        _showConfirm = false;
+        if (_confirmCallback is not null) await _confirmCallback();
+    }
+}

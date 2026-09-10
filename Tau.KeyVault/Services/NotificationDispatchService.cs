@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using NATS.Client.Core;
 using Tau.KeyVault.Data;
@@ -8,20 +9,26 @@ using Tau.KeyVault.Models;
 namespace Tau.KeyVault.Services;
 
 /// <summary>
-/// Dispatches notifications to configured NATS servers and webhooks when key-value pairs change.
-/// All dispatch attempts are logged to the NotificationLogs table.
+/// Dispatches notifications to configured NATS servers, Kafka topics and webhooks when
+/// key-value pairs change. All dispatch attempts are logged to the NotificationLogs table.
 /// </summary>
 public class NotificationDispatchService
 {
     private readonly AppDbContext _db;
     private readonly HttpClient _httpClient;
     private readonly ILogger<NotificationDispatchService> _logger;
+    private readonly KafkaProducerFactory _kafkaProducers;
+    private readonly NotificationConfigService _configs;
 
-    public NotificationDispatchService(AppDbContext db, HttpClient httpClient, ILogger<NotificationDispatchService> logger)
+    public NotificationDispatchService(AppDbContext db, HttpClient httpClient,
+        ILogger<NotificationDispatchService> logger, KafkaProducerFactory kafkaProducers,
+        NotificationConfigService configs)
     {
         _db = db;
         _httpClient = httpClient;
         _logger = logger;
+        _kafkaProducers = kafkaProducers;
+        _configs = configs;
     }
 
     private static string NormalizeEnvironment(string environment) =>
@@ -41,6 +48,10 @@ public class NotificationDispatchService
                 .Where(n => n.Environment == env && n.Enabled)
                 .ToListAsync();
 
+            var kafkaConfigs = await _db.KafkaConfigs
+                .Where(k => k.Environment == env && k.Enabled)
+                .ToListAsync();
+
             var webhookConfigs = await _db.WebhookConfigs
                 .Where(w => w.Environment == env && w.Enabled)
                 .ToListAsync();
@@ -49,6 +60,12 @@ public class NotificationDispatchService
             foreach (var nats in natsConfigs)
             {
                 await DispatchNatsAsync(nats, env, key);
+            }
+
+            // Dispatch Kafka
+            foreach (var kafka in kafkaConfigs)
+            {
+                await DispatchKafkaAsync(kafka, env, key);
             }
 
             // Dispatch webhooks
@@ -91,6 +108,51 @@ public class NotificationDispatchService
         {
             _logger.LogWarning(ex, "NATS publish FAILED: {Target}", target);
             await LogAsync(environment, key, NotificationType.Nats, target, success: false, error: ex.Message);
+        }
+    }
+
+    private async Task DispatchKafkaAsync(KafkaConfig config, string environment, string key)
+    {
+        var resolvedTopic = NotificationConfigService.ResolvePlaceholders(
+            config.Topic, environment, key, config.LowercaseEnvironment);
+        var target = $"{config.BootstrapServers} → {resolvedTopic}";
+
+        try
+        {
+            // Secrets live encrypted in the row; decrypt only to build the producer.
+            var connectable = _configs.DecryptSecrets(config);
+            var producer = _kafkaProducers.GetProducer(connectable);
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                environment,
+                key,
+                timestamp = DateTime.UtcNow
+            });
+
+            // The vault key is the message key, so a consumer gets per-key ordering and
+            // partitioning for free.
+            var result = await producer.ProduceAsync(resolvedTopic, new Message<string, string>
+            {
+                Key = key,
+                Value = payload
+            });
+
+            _logger.LogInformation("Kafka publish OK: {Target} (partition {Partition}, offset {Offset})",
+                target, result.Partition.Value, result.Offset.Value);
+            await LogAsync(environment, key, NotificationType.Kafka, target, success: true);
+        }
+        catch (ProduceException<string, string> ex)
+        {
+            _logger.LogWarning(ex, "Kafka publish FAILED: {Target}", target);
+            await LogAsync(environment, key, NotificationType.Kafka, target, success: false,
+                error: $"{ex.Error.Code}: {ex.Error.Reason}");
+        }
+        catch (Exception ex)
+        {
+            // Includes producer construction failures, e.g. a malformed security configuration.
+            _logger.LogWarning(ex, "Kafka dispatch FAILED: {Target}", target);
+            await LogAsync(environment, key, NotificationType.Kafka, target, success: false, error: ex.Message);
         }
     }
 

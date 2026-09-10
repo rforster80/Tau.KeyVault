@@ -1,0 +1,279 @@
+@page "/audit"
+@attribute [Authorize]
+@inject AuditService AuditSvc
+@inject AuditActorAccessor Actor
+@inject KeyVaultService Vault
+@inject AppSettingsService AppSettings
+@inject IToastService ToastService
+@using Tau.KeyVault.Models
+@using Tau.KeyVault.Services
+
+<PageTitle>Access Audit — @_appTitle</PageTitle>
+
+<div style="display:flex; align-items:center; margin-bottom:1rem;">
+    <h1 style="margin:0;">Access Audit</h1>
+</div>
+
+<p style="margin:0 0 1rem; color:var(--neutral-foreground-hint); font-size:0.9rem;">
+    Who read, wrote or deleted which key, in which environment, and when. Values are never
+    recorded here. Reading this log is itself audited.
+</p>
+
+<!-- Filters -->
+<div class="notif-section">
+    <div class="audit-filters">
+        <div>
+            <label class="form-label">Key</label>
+            <FluentTextField @bind-Value="_filterKey" Placeholder="exact key name" Style="width:100%;" />
+        </div>
+        <div>
+            <label class="form-label">Environment</label>
+            <FluentSelect TOption="string" Value="@_filterEnvironment" ValueChanged="@(v => _filterEnvironment = v)"
+                          Style="width:100%;">
+                <FluentOption Value="@("__any")">(any)</FluentOption>
+                <FluentOption Value="@("")">Global</FluentOption>
+                @foreach (var env in _environments.Where(e => !string.IsNullOrEmpty(e)))
+                {
+                    <FluentOption Value="@env">@env</FluentOption>
+                }
+            </FluentSelect>
+        </div>
+        <div>
+            <label class="form-label">Actor</label>
+            <FluentTextField @bind-Value="_filterActor" Placeholder="API key name or user" Style="width:100%;" />
+        </div>
+        <div>
+            <label class="form-label">Action</label>
+            <FluentSelect TOption="string" Value="@_filterAction" ValueChanged="@(v => _filterAction = v)" Style="width:100%;">
+                <FluentOption Value="@("")">(any)</FluentOption>
+                @foreach (var a in Enum.GetNames<AuditAction>())
+                {
+                    <FluentOption Value="@a">@a</FluentOption>
+                }
+            </FluentSelect>
+        </div>
+        <div>
+            <label class="form-label">Outcome</label>
+            <FluentSelect TOption="string" Value="@_filterOutcome" ValueChanged="@(v => _filterOutcome = v)" Style="width:100%;">
+                <FluentOption Value="@("")">(any)</FluentOption>
+                @foreach (var o in Enum.GetNames<AuditOutcome>())
+                {
+                    <FluentOption Value="@o">@o</FluentOption>
+                }
+            </FluentSelect>
+        </div>
+        <div>
+            <label class="form-label">From (UTC)</label>
+            <FluentTextField @bind-Value="_filterFrom" Placeholder="2026-09-01" Style="width:100%;" />
+        </div>
+        <div>
+            <label class="form-label">To (UTC)</label>
+            <FluentTextField @bind-Value="_filterTo" Placeholder="2026-09-30" Style="width:100%;" />
+        </div>
+        <div class="audit-filter-actions">
+            <FluentButton Appearance="Appearance.Accent" OnClick="ApplyFilters"
+                          IconStart="@(new Icons.Regular.Size16.Search())">Search</FluentButton>
+            <FluentButton Appearance="Appearance.Outline" OnClick="ClearFilters">Clear</FluentButton>
+        </div>
+    </div>
+
+    <!-- Common questions, one click away -->
+    <div class="audit-shortcuts">
+        <span class="form-label" style="margin:0;">Quick views:</span>
+        <FluentButton Appearance="Appearance.Lightweight" OnClick="@(() => QuickView(AuditAction.DeleteKey, null))">
+            Erasures
+        </FluentButton>
+        <FluentButton Appearance="Appearance.Lightweight" OnClick="@(() => QuickView(AuditAction.AuthFailure, AuditOutcome.Denied))">
+            Rejected credentials
+        </FluentButton>
+        <FluentButton Appearance="Appearance.Lightweight" OnClick="@(() => QuickView(AuditAction.ScopeViolation, AuditOutcome.Denied))">
+            Scope violations
+        </FluentButton>
+        <FluentButton Appearance="Appearance.Lightweight" OnClick="@(() => QuickView(AuditAction.WriteKey, null))">
+            Writes
+        </FluentButton>
+    </div>
+</div>
+
+<!-- Results -->
+<div class="notif-section">
+    <div class="notif-section-header">
+        <h3>
+            @_total row@(_total == 1 ? "" : "s")
+            @if (_total > 0)
+            {
+                <span style="font-weight:400; color:var(--neutral-foreground-hint); font-size:0.85rem;">
+                    &nbsp;— showing @(_offset + 1)–@(_offset + _rows.Count)
+                </span>
+            }
+        </h3>
+        <div>
+            <FluentButton Appearance="Appearance.Outline" OnClick="PrevPage" Disabled="@(_offset == 0)"
+                          IconStart="@(new Icons.Regular.Size16.ChevronLeft())">Previous</FluentButton>
+            <FluentButton Appearance="Appearance.Outline" OnClick="NextPage" Style="margin-left:0.25rem;"
+                          Disabled="@(_offset + _rows.Count >= _total)"
+                          IconEnd="@(new Icons.Regular.Size16.ChevronRight())">Next</FluentButton>
+        </div>
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <div class="empty-state-card">
+            <p style="margin:0; font-weight:500;">No audit rows match these filters</p>
+            <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+                Widen the filters, or clear them to see everything.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="kv-grid-wrapper">
+            <table class="kv-grid">
+                <thead>
+                    <tr>
+                        <th style="width:15%;">Timestamp (UTC)</th>
+                        <th style="width:13%;">Action</th>
+                        <th style="width:8%;">Outcome</th>
+                        <th style="width:18%;">Key</th>
+                        <th style="width:12%;">Environment</th>
+                        <th style="width:18%;">Actor</th>
+                        <th style="width:11%;">Source</th>
+                        <th style="width:5%;">Items</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _rows)
+                    {
+                        <tr>
+                            <td class="kv-grid-value"><code style="font-size:0.75rem;">@row.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                            <td><span class="kv-type-badge @ActionBadge(row.Action)">@row.Action</span></td>
+                            <td><span class="kv-type-badge @OutcomeBadge(row.Outcome)">@row.Outcome</span></td>
+                            <td class="kv-grid-key">@(string.IsNullOrEmpty(row.Key) ? "—" : row.Key)</td>
+                            <td class="kv-grid-value">@(string.IsNullOrEmpty(row.Environment) ? "Global" : row.Environment)</td>
+                            <td class="kv-grid-value">
+                                <span class="kv-type-badge kv-type-text">@row.ActorType</span>
+                                @if (!string.IsNullOrEmpty(row.ActorId))
+                                {
+                                    <code style="font-size:0.75rem; margin-left:0.35rem;">@row.ActorId</code>
+                                }
+                            </td>
+                            <td class="kv-grid-value"><code style="font-size:0.75rem;">@(string.IsNullOrEmpty(row.IpAddress) ? "—" : row.IpAddress)</code></td>
+                            <td class="kv-grid-value">@(row.ItemCount == 0 ? "" : row.ItemCount.ToString())</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    private string _appTitle = "Tau Key Vault";
+
+    private List<AccessAuditLog> _rows = new();
+    private List<string> _environments = new();
+    private int _total;
+    private int _offset;
+    private const int PageSize = 50;
+
+    private string _filterKey = "";
+    private string _filterEnvironment = "__any";
+    private string _filterActor = "";
+    private string _filterAction = "";
+    private string _filterOutcome = "";
+    private string _filterFrom = "";
+    private string _filterTo = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _appTitle = await AppSettings.GetAppTitleAsync();
+        _environments = await Vault.GetEnvironmentsAsync();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        AuditAction? action = Enum.TryParse<AuditAction>(_filterAction, out var a) ? a : null;
+        AuditOutcome? outcome = Enum.TryParse<AuditOutcome>(_filterOutcome, out var o) ? o : null;
+
+        // "__any" means no environment filter at all; "" is a real filter meaning Global.
+        string? environment = _filterEnvironment == "__any" ? null : _filterEnvironment;
+
+        DateTime? from = DateTime.TryParse(_filterFrom, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var f) ? f : null;
+        DateTime? to = DateTime.TryParse(_filterTo, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var t) ? t.Date.AddDays(1).AddTicks(-1) : null;   // inclusive end-of-day
+
+        var (rows, total) = await AuditSvc.QueryAsync(
+            key: string.IsNullOrWhiteSpace(_filterKey) ? null : _filterKey.Trim(),
+            environment: environment,
+            actorId: string.IsNullOrWhiteSpace(_filterActor) ? null : _filterActor.Trim(),
+            action: action, outcome: outcome, from: from, to: to,
+            limit: PageSize, offset: _offset);
+
+        _rows = rows;
+        _total = total;
+
+        // Viewing the trail is security-relevant in its own right.
+        var actor = await Actor.GetAsync();
+        await AuditSvc.WriteAsync(AuditAction.ReadAudit, actor.Type, actor.Id,
+            key: _filterKey ?? "", environment: environment ?? "",
+            ipAddress: actor.IpAddress, itemCount: rows.Count);
+    }
+
+    private async Task ApplyFilters()
+    {
+        _offset = 0;
+        await Load();
+    }
+
+    private async Task ClearFilters()
+    {
+        _filterKey = _filterActor = _filterAction = _filterOutcome = _filterFrom = _filterTo = "";
+        _filterEnvironment = "__any";
+        _offset = 0;
+        await Load();
+    }
+
+    private async Task QuickView(AuditAction action, AuditOutcome? outcome)
+    {
+        _filterKey = _filterActor = _filterFrom = _filterTo = "";
+        _filterEnvironment = "__any";
+        _filterAction = action.ToString();
+        _filterOutcome = outcome?.ToString() ?? "";
+        _offset = 0;
+        await Load();
+    }
+
+    private async Task NextPage()
+    {
+        if (_offset + _rows.Count >= _total) return;
+        _offset += PageSize;
+        await Load();
+    }
+
+    private async Task PrevPage()
+    {
+        if (_offset == 0) return;
+        _offset = Math.Max(0, _offset - PageSize);
+        await Load();
+    }
+
+    private static string ActionBadge(AuditAction action) => action switch
+    {
+        AuditAction.DeleteKey or AuditAction.DeleteEnvironment or AuditAction.RevokeApiKey => "kv-type-code",
+        AuditAction.WriteKey or AuditAction.Import or AuditAction.CreateApiKey
+            or AuditAction.RotateApiKey or AuditAction.UpdateApiKey => "kv-type-numeric",
+        AuditAction.AuthFailure or AuditAction.ScopeViolation => "kv-type-csv",
+        _ => "kv-type-text"
+    };
+
+    private static string OutcomeBadge(AuditOutcome outcome) => outcome switch
+    {
+        AuditOutcome.Success => "kv-type-boolean",
+        AuditOutcome.Denied or AuditOutcome.Error => "notif-badge-error",
+        _ => "kv-type-text"
+    };
+}

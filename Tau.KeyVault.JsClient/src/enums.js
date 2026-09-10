@@ -28,3 +28,26 @@ export const KeyVaultDataType = Object.freeze({
   Json: 'Json',
   Csv: 'Csv',
 });
+
+/** Action recorded in the access audit log. @readonly @enum {string} */
+export const KeyVaultAuditAction = Object.freeze({
+  ReadKey: 'ReadKey',
+  ListKeys: 'ListKeys',
+  WriteKey: 'WriteKey',
+  DeleteKey: 'DeleteKey',
+  ListEnvironments: 'ListEnvironments',
+  DeleteEnvironment: 'DeleteEnvironment',
+  RenameEnvironment: 'RenameEnvironment',
+  Export: 'Export',
+  Import: 'Import',
+  ReadAudit: 'ReadAudit',
+  AuthFailure: 'AuthFailure',
+});
+
+/** Result of an audited action. @readonly @enum {string} */
+export const KeyVaultAuditOutcome = Object.freeze({
+  Success: 'Success',
+  NotFound: 'NotFound',
+  Denied: 'Denied',
+  Error: 'Error',
+});

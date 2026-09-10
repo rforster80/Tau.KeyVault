@@ -104,6 +104,93 @@
     }
 </div>
 
+<!-- Kafka Section -->
+<div class="notif-section">
+    <div class="notif-section-header">
+        <h3>Kafka Topics</h3>
+        <FluentButton Appearance="Appearance.Accent" OnClick="ShowAddKafkaDialog"
+                      IconStart="@(new Icons.Regular.Size16.Add())">Add Kafka Broker</FluentButton>
+    </div>
+
+    @if (_kafkaConfigs.Count == 0)
+    {
+        <div class="empty-state-card">
+            <p style="margin:0; font-weight:500;">No Kafka brokers configured</p>
+            <p style="margin:0.25rem 0 0; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+                Click <strong>Add Kafka Broker</strong> to publish key changes to a Kafka topic for this environment.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="kv-grid-wrapper">
+            <table class="kv-grid">
+                <thead>
+                    <tr>
+                        <th style="width:26%;">Bootstrap Servers</th>
+                        <th style="width:26%;">Topic</th>
+                        <th style="width:18%;">Security</th>
+                        <th style="width:12%;">Lowercase Env</th>
+                        <th style="width:10%;">Enabled</th>
+                        <th class="kv-grid-actions-col" style="width:8%;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var kafka in _kafkaConfigs)
+                    {
+                        <tr>
+                            <td class="kv-grid-value"><code>@kafka.BootstrapServers</code></td>
+                            <td class="kv-grid-value">
+                                <code>@kafka.Topic</code>
+                                @if (kafka.Topic.Contains("{environment}"))
+                                {
+                                    <div class="notif-preview">@NotificationConfigService.ResolvePlaceholders(kafka.Topic, GetCurrentEnvDisplay(), lowercaseEnv: kafka.LowercaseEnvironment)</div>
+                                }
+                            </td>
+                            <td>
+                                <span class="kv-type-badge kv-type-code">@kafka.SecurityProtocol</span>
+                                @if (kafka.SaslMechanism != KafkaSaslMechanism.None)
+                                {
+                                    <div class="notif-preview">SASL @kafka.SaslMechanism@(string.IsNullOrWhiteSpace(kafka.SaslUsername) ? "" : $" as {kafka.SaslUsername}")</div>
+                                }
+                            </td>
+                            <td>
+                                @if (kafka.LowercaseEnvironment)
+                                {
+                                    <span class="kv-type-badge kv-type-boolean">Yes</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge kv-type-text">No</span>
+                                }
+                            </td>
+                            <td>
+                                @if (kafka.Enabled)
+                                {
+                                    <span class="kv-type-badge kv-type-numeric">Active</span>
+                                }
+                                else
+                                {
+                                    <span class="kv-type-badge kv-type-text">Disabled</span>
+                                }
+                            </td>
+                            <td class="kv-grid-actions-col">
+                                <FluentButton Appearance="Appearance.Outline" OnClick="() => EditKafka(kafka)"
+                                              IconStart="@(new Icons.Regular.Size16.Edit())"
+                                              Title="Edit" />
+                                <FluentButton Appearance="Appearance.Outline" OnClick="() => DeleteKafka(kafka)"
+                                              Style="color: var(--error-foreground, #d13438); margin-left: 0.25rem;"
+                                              IconStart="@(new Icons.Regular.Size16.Delete())"
+                                              Title="Delete" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
 <!-- Webhook Section -->
 <div class="notif-section">
     <div class="notif-section-header">
@@ -241,6 +328,10 @@
                                 {
                                     <span class="kv-type-badge kv-type-json">NATS</span>
                                 }
+                                else if (log.Type == NotificationType.Kafka)
+                                {
+                                    <span class="kv-type-badge kv-type-csv">KAFKA</span>
+                                }
                                 else
                                 {
                                     <span class="kv-type-badge kv-type-code">WEBHOOK</span>
@@ -297,6 +388,200 @@
             <div class="dialog-footer">
                 <FluentButton Appearance="Appearance.Outline" OnClick="CloseNatsDialog">Cancel</FluentButton>
                 <FluentButton Appearance="Appearance.Accent" OnClick="SaveNats">@(_isEditingNats ? "Update" : "Add")</FluentButton>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Kafka Add/Edit Dialog -->
+@if (_showKafkaDialog)
+{
+    <div class="dialog-overlay" @onclick="CloseKafkaDialog">
+        <div class="dialog-panel" @onclick:stopPropagation style="max-width:720px;">
+            <div class="dialog-header">
+                <h3>@(_isEditingKafka ? "Edit Kafka Broker" : "Add Kafka Broker")</h3>
+            </div>
+            <div class="dialog-body" style="max-height:70vh; overflow-y:auto;">
+
+                <div class="form-group">
+                    <label class="form-label">Bootstrap Servers</label>
+                    <FluentTextField @bind-Value="_editKafka.BootstrapServers" Placeholder="broker1:9092,broker2:9092" Style="width:100%;" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Topic</label>
+                    <FluentTextField @bind-Value="_editKafka.Topic" Placeholder="keyvault.{environment}.updates" Style="width:100%;" />
+                    @if (!string.IsNullOrWhiteSpace(_editKafka.Topic) && _editKafka.Topic.Contains("{environment}"))
+                    {
+                        <div class="notif-preview">Preview: @NotificationConfigService.ResolvePlaceholders(_editKafka.Topic, GetCurrentEnvDisplay(), lowercaseEnv: _editKafka.LowercaseEnvironment)</div>
+                    }
+                </div>
+                <div class="form-group" style="display:flex; gap:1.5rem;">
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="checkbox" @bind="_editKafka.LowercaseEnvironment" />
+                        <span class="form-label" style="margin:0;">Lowercase environment</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                        <input type="checkbox" @bind="_editKafka.Enabled" />
+                        <span class="form-label" style="margin:0;">Enabled</span>
+                    </label>
+                </div>
+
+                <h4 class="notif-subhead">Security</h4>
+                <div class="form-group" style="display:flex; gap:1rem;">
+                    <div style="flex:1;">
+                        <label class="form-label">Security Protocol</label>
+                        <FluentSelect TOption="KafkaSecurityProtocol"
+                                      Items="@_securityProtocols"
+                                      @bind-SelectedOption="_editKafka.SecurityProtocol"
+                                      OptionText="@(p => p.ToString())" Style="width:100%;" />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="form-label">SASL Mechanism</label>
+                        <FluentSelect TOption="KafkaSaslMechanism"
+                                      Items="@_saslMechanisms"
+                                      @bind-SelectedOption="_editKafka.SaslMechanism"
+                                      OptionText="@(m => m.ToString())" Style="width:100%;" />
+                    </div>
+                </div>
+
+                @if (_editKafka.SaslMechanism is KafkaSaslMechanism.Plain or KafkaSaslMechanism.ScramSha256 or KafkaSaslMechanism.ScramSha512)
+                {
+                    <div class="form-group" style="display:flex; gap:1rem;">
+                        <div style="flex:1;">
+                            <label class="form-label">SASL Username</label>
+                            <FluentTextField @bind-Value="_editKafka.SaslUsername" Style="width:100%;" />
+                        </div>
+                        <div style="flex:1;">
+                            <label class="form-label">SASL Password</label>
+                            <FluentTextField @bind-Value="_editKafkaSaslPassword" TextFieldType="TextFieldType.Password"
+                                             Placeholder="@_secretPlaceholder" Style="width:100%;" />
+                        </div>
+                    </div>
+                }
+
+                @if (_editKafka.SaslMechanism == KafkaSaslMechanism.Gssapi)
+                {
+                    <div class="form-group" style="display:flex; gap:1rem;">
+                        <div style="flex:1;">
+                            <label class="form-label">Kerberos Service Name</label>
+                            <FluentTextField @bind-Value="_editKafka.SaslKerberosServiceName" Placeholder="kafka" Style="width:100%;" />
+                        </div>
+                        <div style="flex:1;">
+                            <label class="form-label">Kerberos Principal</label>
+                            <FluentTextField @bind-Value="_editKafka.SaslKerberosPrincipal" Style="width:100%;" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Keytab Path</label>
+                        <FluentTextField @bind-Value="_editKafka.SaslKerberosKeytab" Style="width:100%;" />
+                    </div>
+                }
+
+                @if (_editKafka.SaslMechanism == KafkaSaslMechanism.OAuthBearer)
+                {
+                    <div class="form-group" style="display:flex; gap:1rem;">
+                        <div style="flex:1;">
+                            <label class="form-label">OAuth Client ID</label>
+                            <FluentTextField @bind-Value="_editKafka.OauthBearerClientId" Style="width:100%;" />
+                        </div>
+                        <div style="flex:1;">
+                            <label class="form-label">OAuth Client Secret</label>
+                            <FluentTextField @bind-Value="_editKafkaOauthSecret" TextFieldType="TextFieldType.Password"
+                                             Placeholder="@_secretPlaceholder" Style="width:100%;" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Token Endpoint URL</label>
+                        <FluentTextField @bind-Value="_editKafka.OauthBearerTokenEndpointUrl" Style="width:100%;" />
+                    </div>
+                    <div class="form-group" style="display:flex; gap:1rem;">
+                        <div style="flex:1;">
+                            <label class="form-label">Scope</label>
+                            <FluentTextField @bind-Value="_editKafka.OauthBearerScope" Style="width:100%;" />
+                        </div>
+                        <div style="flex:1;">
+                            <label class="form-label">Extensions</label>
+                            <FluentTextField @bind-Value="_editKafka.OauthBearerExtensions" Placeholder="key=value,key2=value2" Style="width:100%;" />
+                        </div>
+                    </div>
+                }
+
+                @if (_editKafka.SecurityProtocol is KafkaSecurityProtocol.Ssl or KafkaSecurityProtocol.SaslSsl)
+                {
+                    <h4 class="notif-subhead">TLS</h4>
+                    <div class="form-group">
+                        <label class="form-label">CA Certificate Path</label>
+                        <FluentTextField @bind-Value="_editKafka.SslCaLocation" Placeholder="/etc/ssl/certs/ca.pem" Style="width:100%;" />
+                    </div>
+                    <div class="form-group" style="display:flex; gap:1rem;">
+                        <div style="flex:1;">
+                            <label class="form-label">Client Certificate Path</label>
+                            <FluentTextField @bind-Value="_editKafka.SslCertificateLocation" Style="width:100%;" />
+                        </div>
+                        <div style="flex:1;">
+                            <label class="form-label">Client Key Path</label>
+                            <FluentTextField @bind-Value="_editKafka.SslKeyLocation" Style="width:100%;" />
+                        </div>
+                    </div>
+                    <div class="form-group" style="display:flex; gap:1rem; align-items:flex-end;">
+                        <div style="flex:1;">
+                            <label class="form-label">Client Key Password</label>
+                            <FluentTextField @bind-Value="_editKafkaSslKeyPassword" TextFieldType="TextFieldType.Password"
+                                             Placeholder="@_secretPlaceholder" Style="width:100%;" />
+                        </div>
+                        <label style="flex:1; display:flex; align-items:center; gap:0.5rem; cursor:pointer; padding-bottom:0.5rem;">
+                            <input type="checkbox" @bind="_editKafka.EnableSslCertificateVerification" />
+                            <span class="form-label" style="margin:0;">Verify broker certificate</span>
+                        </label>
+                    </div>
+                }
+
+                <h4 class="notif-subhead">Producer</h4>
+                <div class="form-group" style="display:flex; gap:1rem;">
+                    <div style="flex:1;">
+                        <label class="form-label">Acks</label>
+                        <FluentSelect TOption="KafkaAcks" Items="@_ackLevels"
+                                      @bind-SelectedOption="_editKafka.Acks"
+                                      OptionText="@(a => a.ToString())" Style="width:100%;" />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="form-label">Message Timeout (ms)</label>
+                        <FluentNumberField @bind-Value="_editKafka.MessageTimeoutMs" Style="width:100%;" />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="form-label">Request Timeout (ms)</label>
+                        <FluentNumberField @bind-Value="_editKafka.RequestTimeoutMs" Style="width:100%;" />
+                    </div>
+                </div>
+                <div class="form-group" style="display:flex; gap:1rem; align-items:flex-end;">
+                    <div style="flex:1;">
+                        <label class="form-label">Client ID</label>
+                        <FluentTextField @bind-Value="_editKafka.ClientId" Placeholder="tau-keyvault" Style="width:100%;" />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="form-label">Compression</label>
+                        <FluentTextField @bind-Value="_editKafka.CompressionType" Placeholder="none | gzip | snappy | lz4 | zstd" Style="width:100%;" />
+                    </div>
+                    <label style="flex:1; display:flex; align-items:center; gap:0.5rem; cursor:pointer; padding-bottom:0.5rem;">
+                        <input type="checkbox" @bind="_editKafka.EnableIdempotence" />
+                        <span class="form-label" style="margin:0;">Idempotent producer</span>
+                    </label>
+                </div>
+
+                <h4 class="notif-subhead">Advanced</h4>
+                <div class="form-group">
+                    <label class="form-label">Additional librdkafka settings</label>
+                    <FluentTextArea @bind-Value="_editKafka.AdditionalConfig" Rows="4" Style="width:100%;"
+                                    Placeholder="one key=value per line, e.g. linger.ms=5" />
+                    <div class="notif-preview">
+                        Applied last, so these override the fields above. Stored in plain text — put
+                        credentials in the dedicated fields, which are encrypted.
+                    </div>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <FluentButton Appearance="Appearance.Outline" OnClick="CloseKafkaDialog">Cancel</FluentButton>
+                <FluentButton Appearance="Appearance.Accent" OnClick="SaveKafka">@(_isEditingKafka ? "Update" : "Add")</FluentButton>
             </div>
         </div>
     </div>
@@ -374,6 +659,23 @@
     private bool _editNatsLowercase = true;
     private bool _editNatsEnabled = true;
 
+    // ── Kafka ────────────────────────────────────────────────────
+    private List<KafkaConfig> _kafkaConfigs = new();
+    private bool _showKafkaDialog;
+    private bool _isEditingKafka;
+    private KafkaConfig _editKafka = new();
+
+    // Secrets are write-only in the UI: the stored value is never sent to the browser, and a
+    // blank field on edit means "keep what is stored".
+    private string _editKafkaSaslPassword = "";
+    private string _editKafkaSslKeyPassword = "";
+    private string _editKafkaOauthSecret = "";
+    private string _secretPlaceholder = "";
+
+    private static readonly KafkaSecurityProtocol[] _securityProtocols = Enum.GetValues<KafkaSecurityProtocol>();
+    private static readonly KafkaSaslMechanism[] _saslMechanisms = Enum.GetValues<KafkaSaslMechanism>();
+    private static readonly KafkaAcks[] _ackLevels = Enum.GetValues<KafkaAcks>();
+
     // ── Webhooks ─────────────────────────────────────────────────
     private List<WebhookConfig> _webhookConfigs = new();
     private bool _showWebhookDialog;
@@ -411,6 +713,7 @@
     private async Task LoadConfigs()
     {
         _natsConfigs = await NotifService.GetNatsConfigsAsync(_selectedEnvironment);
+        _kafkaConfigs = await NotifService.GetKafkaConfigsAsync(_selectedEnvironment);
         _webhookConfigs = await NotifService.GetWebhookConfigsAsync(_selectedEnvironment);
         _logs = await DispatchService.GetLogsAsync(_selectedEnvironment);
     }
@@ -472,6 +775,113 @@
         {
             await NotifService.DeleteNatsConfigAsync(config.Id);
             ToastService.ShowSuccess("NATS server deleted.");
+            await LoadConfigs();
+        });
+    }
+
+    // ── Kafka dialog ─────────────────────────────────────────────
+    private void ShowAddKafkaDialog()
+    {
+        _isEditingKafka = false;
+        _editKafka = new KafkaConfig { Topic = "keyvault.{environment}.updates" };
+        _editKafkaSaslPassword = "";
+        _editKafkaSslKeyPassword = "";
+        _editKafkaOauthSecret = "";
+        _secretPlaceholder = "";
+        _showKafkaDialog = true;
+    }
+
+    private void EditKafka(KafkaConfig config)
+    {
+        _isEditingKafka = true;
+
+        // Work on a copy so cancelling leaves the loaded row untouched. Secrets stay behind:
+        // the encrypted values are not round-tripped through the browser.
+        _editKafka = new KafkaConfig
+        {
+            Id = config.Id,
+            Environment = config.Environment,
+            BootstrapServers = config.BootstrapServers,
+            Topic = config.Topic,
+            LowercaseEnvironment = config.LowercaseEnvironment,
+            Enabled = config.Enabled,
+            ClientId = config.ClientId,
+            SecurityProtocol = config.SecurityProtocol,
+            SaslMechanism = config.SaslMechanism,
+            SaslUsername = config.SaslUsername,
+            SslCaLocation = config.SslCaLocation,
+            SslCertificateLocation = config.SslCertificateLocation,
+            SslKeyLocation = config.SslKeyLocation,
+            EnableSslCertificateVerification = config.EnableSslCertificateVerification,
+            SaslKerberosServiceName = config.SaslKerberosServiceName,
+            SaslKerberosPrincipal = config.SaslKerberosPrincipal,
+            SaslKerberosKeytab = config.SaslKerberosKeytab,
+            OauthBearerClientId = config.OauthBearerClientId,
+            OauthBearerTokenEndpointUrl = config.OauthBearerTokenEndpointUrl,
+            OauthBearerScope = config.OauthBearerScope,
+            OauthBearerExtensions = config.OauthBearerExtensions,
+            Acks = config.Acks,
+            MessageTimeoutMs = config.MessageTimeoutMs,
+            RequestTimeoutMs = config.RequestTimeoutMs,
+            EnableIdempotence = config.EnableIdempotence,
+            CompressionType = config.CompressionType,
+            AdditionalConfig = config.AdditionalConfig
+        };
+
+        _editKafkaSaslPassword = "";
+        _editKafkaSslKeyPassword = "";
+        _editKafkaOauthSecret = "";
+        _secretPlaceholder = "(unchanged)";
+        _showKafkaDialog = true;
+    }
+
+    private void CloseKafkaDialog() => _showKafkaDialog = false;
+
+    private async Task SaveKafka()
+    {
+        if (string.IsNullOrWhiteSpace(_editKafka.BootstrapServers))
+        {
+            ToastService.ShowWarning("Bootstrap servers are required.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_editKafka.Topic))
+        {
+            ToastService.ShowWarning("Topic is required.");
+            return;
+        }
+        if (_editKafka.SaslMechanism != KafkaSaslMechanism.None &&
+            _editKafka.SecurityProtocol is KafkaSecurityProtocol.Plaintext or KafkaSecurityProtocol.Ssl)
+        {
+            ToastService.ShowWarning("A SASL mechanism needs a SASL security protocol (SaslPlaintext or SaslSsl).");
+            return;
+        }
+
+        // Blank on edit means "keep the stored secret"; null tells the service to leave it be.
+        _editKafka.SaslPassword = _isEditingKafka && _editKafkaSaslPassword.Length == 0 ? null : _editKafkaSaslPassword;
+        _editKafka.SslKeyPassword = _isEditingKafka && _editKafkaSslKeyPassword.Length == 0 ? null : _editKafkaSslKeyPassword;
+        _editKafka.OauthBearerClientSecret = _isEditingKafka && _editKafkaOauthSecret.Length == 0 ? null : _editKafkaOauthSecret;
+
+        if (_isEditingKafka)
+        {
+            await NotifService.UpdateKafkaConfigAsync(_editKafka.Id, _editKafka);
+            ToastService.ShowSuccess("Kafka broker updated.");
+        }
+        else
+        {
+            await NotifService.AddKafkaConfigAsync(_selectedEnvironment, _editKafka);
+            ToastService.ShowSuccess("Kafka broker added.");
+        }
+
+        _showKafkaDialog = false;
+        await LoadConfigs();
+    }
+
+    private void DeleteKafka(KafkaConfig config)
+    {
+        ShowConfirm("Delete Kafka Broker", $"Delete Kafka broker \"{config.BootstrapServers}\"?", "Delete", async () =>
+        {
+            await NotifService.DeleteKafkaConfigAsync(config.Id);
+            ToastService.ShowSuccess("Kafka broker deleted.");
             await LoadConfigs();
         });
     }

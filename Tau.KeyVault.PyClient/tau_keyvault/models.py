@@ -45,6 +45,86 @@ class DeleteEnvironmentResponse:
 
 
 @dataclass
+class ApiKeyResponse:
+    """Metadata for a per-environment API credential. Never carries the secret."""
+
+    id: int = 0
+    name: str = ""
+    environment: str = ""
+    enabled: bool = False
+    created_at: str = ""
+    last_rotated_at: str = ""
+
+
+@dataclass
+class ApiKeyListResponse:
+    items: list[ApiKeyResponse] = field(default_factory=list)
+
+
+@dataclass
+class ApiKeySecretResponse:
+    """Returned by create and rotate only.
+
+    The server stores just a hash, so ``key`` cannot be recovered afterwards —
+    store it immediately.
+    """
+
+    id: int = 0
+    name: str = ""
+    environment: str = ""
+    #: Store this now; it is never shown again.
+    key: str = ""
+    message: str = ""
+
+
+@dataclass
+class RevokeApiKeyResponse:
+    message: str = ""
+    id: int = 0
+
+
+@dataclass
+class AuditEntryResponse:
+    """One access audit row.
+
+    There is deliberately no value field: the trail records access to a key,
+    never its contents.
+    """
+
+    timestamp: str = ""
+    action: str = ""
+    key: str = ""
+    environment: str = ""
+    actor_type: str = ""
+    #: API key name or admin username. Never the API key itself.
+    actor_id: str = ""
+    outcome: str = ""
+    ip_address: str = ""
+    item_count: int = 0
+    id: int = 0
+
+
+@dataclass
+class AuditEntryListResponse:
+    """A page of audit rows, newest first."""
+
+    items: list[AuditEntryResponse] = field(default_factory=list)
+    #: Total rows matching the filter, ignoring limit/offset.
+    total_count: int = 0
+    limit: int = 0
+    offset: int = 0
+
+
+@dataclass
+class DeleteKeyResponse:
+    """Result of deleting a single key."""
+
+    message: str = ""
+    key: str = ""
+    environment: str = ""
+
+
+@dataclass
 class RenameEnvironmentResponse:
     """Result of renaming an environment."""
 

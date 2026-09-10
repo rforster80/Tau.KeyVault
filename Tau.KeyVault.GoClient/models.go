@@ -1,5 +1,7 @@
 package keyvault
 
+import "time"
+
 // ═══════════════════════════════════════════════════════════
 //  Response models
 // ═══════════════════════════════════════════════════════════
@@ -28,6 +30,96 @@ type EnvironmentListResponse struct {
 type DeleteEnvironmentResponse struct {
 	Message     string `json:"message"     protobuf:"bytes,1,opt,name=message"`
 	DeletedKeys int    `json:"deletedKeys" protobuf:"varint,2,opt,name=deletedKeys"`
+}
+
+// ApiKeyResponse is the metadata for a per-environment API credential.
+// It never carries the secret.
+type ApiKeyResponse struct {
+	ID            int    `json:"id"            protobuf:"varint,1,opt,name=id"`
+	Name          string `json:"name"          protobuf:"bytes,2,opt,name=name"`
+	Environment   string `json:"environment"   protobuf:"bytes,3,opt,name=environment"`
+	Enabled       bool   `json:"enabled"       protobuf:"varint,4,opt,name=enabled"`
+	CreatedAt     string `json:"createdAt"     protobuf:"bytes,5,opt,name=createdAt"`
+	LastRotatedAt string `json:"lastRotatedAt" protobuf:"bytes,6,opt,name=lastRotatedAt"`
+}
+
+// ApiKeyListResponse is the set of configured per-environment credentials.
+type ApiKeyListResponse struct {
+	Items []ApiKeyResponse `json:"items" protobuf:"bytes,1,rep,name=items"`
+}
+
+// ApiKeySecretResponse is returned by create and rotate only. The server stores
+// only a hash, so Key cannot be recovered afterwards — store it immediately.
+type ApiKeySecretResponse struct {
+	ID          int    `json:"id"          protobuf:"varint,1,opt,name=id"`
+	Name        string `json:"name"        protobuf:"bytes,2,opt,name=name"`
+	Environment string `json:"environment" protobuf:"bytes,3,opt,name=environment"`
+	// Key is shown once and never again.
+	Key     string `json:"key"     protobuf:"bytes,4,opt,name=key"`
+	Message string `json:"message" protobuf:"bytes,5,opt,name=message"`
+}
+
+// RevokeApiKeyResponse is the result of removing a credential.
+type RevokeApiKeyResponse struct {
+	Message string `json:"message" protobuf:"bytes,1,opt,name=message"`
+	ID      int    `json:"id"      protobuf:"varint,2,opt,name=id"`
+}
+
+type createApiKeyRequest struct {
+	Name        string `json:"name"        protobuf:"bytes,1,opt,name=name"`
+	Environment string `json:"environment" protobuf:"bytes,2,opt,name=environment"`
+}
+
+type updateApiKeyRequest struct {
+	Enabled bool `json:"enabled" protobuf:"varint,1,opt,name=enabled"`
+}
+
+// AuditEntryResponse is one access audit row.
+//
+// There is deliberately no value field: the trail records access to a key,
+// never its contents.
+type AuditEntryResponse struct {
+	Timestamp   string `json:"timestamp"   protobuf:"bytes,1,opt,name=timestamp"`
+	Action      string `json:"action"      protobuf:"bytes,2,opt,name=action"`
+	Key         string `json:"key"         protobuf:"bytes,3,opt,name=key"`
+	Environment string `json:"environment" protobuf:"bytes,4,opt,name=environment"`
+	ActorType   string `json:"actorType"   protobuf:"bytes,5,opt,name=actorType"`
+	// ActorID is an API key name or admin username, never the API key itself.
+	ActorID   string `json:"actorId"     protobuf:"bytes,6,opt,name=actorId"`
+	Outcome   string `json:"outcome"     protobuf:"bytes,7,opt,name=outcome"`
+	IPAddress string `json:"ipAddress"   protobuf:"bytes,8,opt,name=ipAddress"`
+	ItemCount int    `json:"itemCount"   protobuf:"varint,9,opt,name=itemCount"`
+	ID        int    `json:"id"          protobuf:"varint,10,opt,name=id"`
+}
+
+// AuditEntryListResponse is a page of audit rows, newest first.
+type AuditEntryListResponse struct {
+	Items []AuditEntryResponse `json:"items"      protobuf:"bytes,1,rep,name=items"`
+	// TotalCount is the number of rows matching the filter, ignoring limit/offset.
+	TotalCount int `json:"totalCount" protobuf:"varint,2,opt,name=totalCount"`
+	Limit      int `json:"limit"      protobuf:"varint,3,opt,name=limit"`
+	Offset     int `json:"offset"     protobuf:"varint,4,opt,name=offset"`
+}
+
+// AuditQuery filters a call to GetAuditLog. All fields are optional and combine with AND.
+// A non-nil pointer to an empty Environment matches Global.
+type AuditQuery struct {
+	Key         *string
+	Environment *string
+	ActorID     *string
+	Action      *string
+	Outcome     *string
+	From        *time.Time
+	To          *time.Time
+	Limit       *int
+	Offset      *int
+}
+
+// DeleteKeyResponse is the result of deleting a single key.
+type DeleteKeyResponse struct {
+	Message     string `json:"message"     protobuf:"bytes,1,opt,name=message"`
+	Key         string `json:"key"         protobuf:"bytes,2,opt,name=key"`
+	Environment string `json:"environment" protobuf:"bytes,3,opt,name=environment"`
 }
 
 // RenameEnvironmentResponse is the result of renaming an environment.

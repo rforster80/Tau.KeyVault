@@ -120,6 +120,9 @@ These methods map directly to the Tau Key Vault REST API endpoints.
 // List all keys for an environment
 var keys = await vault.GetAllKeysAsync(environment: "PRODUCTION");
 
+// Every key in every environment — the raw dump clients use to build a local cache.
+var everything = await vault.GetAllKeysAllEnvironmentsAsync();
+
 // Get a single key
 var entry = await vault.GetKeyAsync("ConnectionString", environment: "PRODUCTION");
 
@@ -133,6 +136,19 @@ var result = await vault.UpsertKeyAsync(
 
 // Check if a key exists
 bool exists = await vault.KeyExistsAsync("MyKey", environment: "PRODUCTION");
+```
+
+### Deleting a Key
+
+```csharp
+// Delete one key from one environment.
+var deleted = await vault.DeleteKeyAsync("ConnectionString", "PRODUCTION");
+Console.WriteLine($"{deleted.Key} removed from {deleted.Environment}");
+
+// Unlike a get, a delete never falls back to Global: if the key exists only
+// globally, this throws KeyVaultApiException with a 404 rather than deleting it.
+// Pass an empty environment to delete the global entry itself.
+await vault.DeleteKeyAsync("ConnectionString", "");
 ```
 
 ### Environments
@@ -335,6 +351,61 @@ updated = await vault.CsvReplaceAsync("AllowedOrigins",
     "https://new.example.com");
 ```
 
+## Access Audit Log
+
+Every read, write and delete is recorded server-side. Values are never recorded, so
+nothing here can leak a secret.
+
+```csharp
+// Everything that happened to one key — the erasure-evidence question.
+var trail = await vault.GetKeyAuditTrailAsync("SubjectEmail");
+foreach (var row in trail.Items)
+    Console.WriteLine($"{row.Timestamp:u} {row.Action,-10} {row.ActorType}:{row.ActorId} {row.Outcome}");
+
+// Was a specific key actually destroyed, and by whom?
+var erased = await vault.GetAuditLogAsync(
+    key: "SubjectEmail", action: KeyVaultAuditAction.DeleteKey);
+
+// What has one credential been doing this week?
+var byCredential = await vault.GetAuditLogAsync(
+    actorId: "adapter-prod",
+    from: DateTime.UtcNow.AddDays(-7),
+    limit: 500);
+
+// Rejected credentials — the signal for a leaked key.
+var denied = await vault.GetAuditLogAsync(
+    action: KeyVaultAuditAction.AuthFailure,
+    outcome: KeyVaultAuditOutcome.Denied);
+
+Console.WriteLine($"{denied.TotalCount} rejected attempts");
+```
+
+## Per-Environment API Credentials
+
+Requires a Global API key, and `EnableAPIKeyPerEnvironment` on the server. A credential
+bound to an environment sees only that environment, with no Global fallback.
+
+```csharp
+// Mint a credential. The secret is returned once and is never retrievable again.
+var minted = await vault.CreateApiKeyAsync("adapter-prod", "PRODUCTION");
+Console.WriteLine($"Store this now: {minted.Key}");
+
+// List them — metadata only, never the secret.
+var keys = await vault.ListApiKeysAsync();
+foreach (var k in keys.Items)
+    Console.WriteLine($"{k.Id} {k.Name} -> {k.Environment} (enabled: {k.Enabled})");
+
+// Rotate: the previous secret stops working immediately.
+var rotated = await vault.RotateApiKeyAsync(minted.Id);
+Console.WriteLine($"New secret: {rotated.Key}");
+
+// Suspend without deleting, so the audit trail keeps naming its subject.
+await vault.SetApiKeyEnabledAsync(minted.Id, enabled: false);
+
+// Or remove it permanently.
+await vault.RevokeApiKeyAsync(minted.Id);
+```
+
 ## Error Handling
 
 API errors are thrown as `KeyVaultApiException` with the HTTP status code and server error message:
@@ -375,6 +446,20 @@ builder.Services.AddKeyVaultClient(options =>
     builder.Configuration.GetSection("KeyVault").Bind(options));
 ```
 
+## Publishing
+
+`sample_publish-nuget.sh` (and `sample_publish-nuget.ps1` for Windows) build and push the
+package. Copy them to the un-prefixed names — `publish-nuget.sh`, `nuget_version.txt` — which
+are gitignored, then fill in your feed and API key:
+
+```bash
+cp sample_publish-nuget.sh publish-nuget.sh
+cp sample_nuget_version.txt nuget_version.txt
+./publish-nuget.sh -s "https://nuget.example.com/v3/index.json" -k "$NUGET_KEY"
+```
+
+The script reads the version file, increments the patch, writes it back, packs and pushes.
+
 ## API Reference
 
 ### Core Methods
@@ -382,10 +467,19 @@ builder.Services.AddKeyVaultClient(options =>
 | Method | Description |
 |--------|-------------|
 | `GetAllKeysAsync` | List all keys for an environment |
+| `GetAllKeysAllEnvironmentsAsync` | List all keys across every environment (no filtering) |
 | `GetKeyAsync` | Get a single key by name |
 | `UpsertKeyAsync` | Create or update a key |
 | `KeyExistsAsync` | Check if a key exists |
 | `GetEnvironmentsAsync` | List all environments |
+| `DeleteKeyAsync` | Delete a single key from one environment (no global fallback) |
+| `GetAuditLogAsync` | Query the access audit log (filters: key, environment, actorId, action, outcome, from, to) |
+| `GetKeyAuditTrailAsync` | Every audit row for one key, including its erasure evidence |
+| `ListApiKeysAsync` | List per-environment credentials (Global only; secrets never returned) |
+| `CreateApiKeyAsync` | Mint a credential bound to one environment; the key is returned once |
+| `RotateApiKeyAsync` | Replace a credential's secret; the previous key stops working immediately |
+| `SetApiKeyEnabledAsync` | Suspend or resume a credential without deleting it |
+| `RevokeApiKeyAsync` | Permanently remove a credential |
 | `DeleteEnvironmentAsync` | Delete an environment and all its keys |
 | `RenameEnvironmentAsync` | Rename an environment |
 | `ExportAsync` | Export keys from an environment |

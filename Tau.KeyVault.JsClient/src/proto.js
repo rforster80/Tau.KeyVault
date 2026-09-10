@@ -48,6 +48,72 @@ const DeleteEnvironmentResponse = new Type('DeleteEnvironmentResponse')
   .add(new Field('deletedKeys', 2, 'int32'));
 root.add(DeleteEnvironmentResponse);
 
+const ApiKeyResponse = new Type('ApiKeyResponse')
+  .add(new Field('id', 1, 'int32'))
+  .add(new Field('name', 2, 'string'))
+  .add(new Field('environment', 3, 'string'))
+  .add(new Field('enabled', 4, 'bool'))
+  .add(new Field('createdAt', 5, 'bcl_DateTime'))
+  .add(new Field('lastRotatedAt', 6, 'bcl_DateTime'));
+root.add(ApiKeyResponse);
+
+const ApiKeyListResponse = new Type('ApiKeyListResponse')
+  .add(new Field('items', 1, 'ApiKeyResponse', 'repeated'));
+root.add(ApiKeyListResponse);
+
+// The only message that ever carries a credential secret, and only on create/rotate.
+const ApiKeySecretResponse = new Type('ApiKeySecretResponse')
+  .add(new Field('id', 1, 'int32'))
+  .add(new Field('name', 2, 'string'))
+  .add(new Field('environment', 3, 'string'))
+  .add(new Field('key', 4, 'string'))
+  .add(new Field('message', 5, 'string'));
+root.add(ApiKeySecretResponse);
+
+const RevokeApiKeyResponse = new Type('RevokeApiKeyResponse')
+  .add(new Field('message', 1, 'string'))
+  .add(new Field('id', 2, 'int32'));
+root.add(RevokeApiKeyResponse);
+
+const CreateApiKeyRequest = new Type('CreateApiKeyRequest')
+  .add(new Field('name', 1, 'string'))
+  .add(new Field('environment', 2, 'string'));
+root.add(CreateApiKeyRequest);
+
+const UpdateApiKeyRequest = new Type('UpdateApiKeyRequest')
+  .add(new Field('enabled', 1, 'bool'));
+root.add(UpdateApiKeyRequest);
+
+// Audit rows carry no value field, by design.
+// timestamp is protobuf-net's bcl.DateTime surrogate; like updatedAt elsewhere in this
+// codec it decodes to an opaque object, so prefer the Api transport when you need the
+// timestamp as a string.
+const AuditEntryResponse = new Type('AuditEntryResponse')
+  .add(new Field('timestamp', 1, 'bcl_DateTime'))
+  .add(new Field('action', 2, 'string'))
+  .add(new Field('key', 3, 'string'))
+  .add(new Field('environment', 4, 'string'))
+  .add(new Field('actorType', 5, 'string'))
+  .add(new Field('actorId', 6, 'string'))
+  .add(new Field('outcome', 7, 'string'))
+  .add(new Field('ipAddress', 8, 'string'))
+  .add(new Field('itemCount', 9, 'int32'))
+  .add(new Field('id', 10, 'int32'));
+root.add(AuditEntryResponse);
+
+const AuditEntryListResponse = new Type('AuditEntryListResponse')
+  .add(new Field('items', 1, 'AuditEntryResponse', 'repeated'))
+  .add(new Field('totalCount', 2, 'int32'))
+  .add(new Field('limit', 3, 'int32'))
+  .add(new Field('offset', 4, 'int32'));
+root.add(AuditEntryListResponse);
+
+const DeleteKeyResponse = new Type('DeleteKeyResponse')
+  .add(new Field('message', 1, 'string'))
+  .add(new Field('key', 2, 'string'))
+  .add(new Field('environment', 3, 'string'));
+root.add(DeleteKeyResponse);
+
 const RenameEnvironmentResponse = new Type('RenameEnvironmentResponse')
   .add(new Field('message', 1, 'string'))
   .add(new Field('updatedKeys', 2, 'int32'));
@@ -115,6 +181,15 @@ export const Proto = {
   KeyEntryListResponse,
   EnvironmentListResponse,
   DeleteEnvironmentResponse,
+  DeleteKeyResponse,
+  AuditEntryResponse,
+  AuditEntryListResponse,
+  ApiKeyResponse,
+  ApiKeyListResponse,
+  ApiKeySecretResponse,
+  RevokeApiKeyResponse,
+  CreateApiKeyRequest,
+  UpdateApiKeyRequest,
   RenameEnvironmentResponse,
   ExportPayloadResponse,
   ExportKeyItemResponse,

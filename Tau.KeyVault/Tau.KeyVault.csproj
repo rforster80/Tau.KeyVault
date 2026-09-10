@@ -8,10 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" Version="2.15.0" />
     <PackageReference Include="Microsoft.FluentUI.AspNetCore.Components" Version="4.*" />
     <PackageReference Include="Microsoft.FluentUI.AspNetCore.Components.Icons" Version="4.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.*-*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.*-*" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.*-*" />
 <PackageReference Include="Swashbuckle.AspNetCore" Version="7.*" />
     <PackageReference Include="NATS.Net" Version="2.*" />
     <PackageReference Include="protobuf-net" Version="3.*" />

@@ -5,6 +5,11 @@
 @inject AuthenticationStateProvider AuthState
 @inject IToastService ToastService
 @inject NavigationManager Nav
+@inject IConfiguration Config
+@inject KeyVaultService Vault
+@inject ApiKeyService ApiKeys
+@using Tau.KeyVault.Data
+@using Tau.KeyVault.Services
 
 <PageTitle>Settings — @_appTitle</PageTitle>
 
@@ -92,7 +97,104 @@
     </EditForm>
 </div>
 
+<!-- Runtime configuration (read-only) -->
+<div class="settings-card">
+    <h3 style="margin-top:0;">Runtime Configuration</h3>
+    <p style="margin:0 0 1rem; font-size:0.85rem; color:var(--neutral-foreground-hint);">
+        These come from <code>appsettings.json</code> and take effect at startup, so they are shown
+        here but not editable. Changing one means editing the file and restarting the application.
+    </p>
+
+    <div class="kv-grid-wrapper">
+        <table class="kv-grid">
+            <thead>
+                <tr>
+                    <th style="width:34%;">Setting</th>
+                    <th style="width:22%;">Value</th>
+                    <th style="width:44%;">Effect</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="kv-grid-key">Storage provider</td>
+                    <td>
+                        <span class="kv-type-badge kv-type-code">@(_useSqlite ? "SQLite" : "PostgreSQL")</span>
+                    </td>
+                    <td class="kv-grid-value">
+                        @(_useSqlite
+                            ? "Local file database. Set UseSqlite: false and configure PostgresConnection for Postgres."
+                            : "Connected via ConnectionStrings:PostgresConnection.")
+                    </td>
+                </tr>
+                <tr>
+                    <td class="kv-grid-key">GlobalKeyFailover</td>
+                    <td>
+                        @if (_globalKeyFailover)
+                        {
+                            <span class="kv-type-badge kv-type-boolean">Enabled</span>
+                        }
+                        else
+                        {
+                            <span class="kv-type-badge kv-type-text">Disabled</span>
+                        }
+                    </td>
+                    <td class="kv-grid-value">
+                        @(_globalKeyFailover
+                            ? "A key missing from an environment resolves to the Global value."
+                            : "A key missing from an environment returns 404; Global values are never inherited.")
+                    </td>
+                </tr>
+                <tr>
+                    <td class="kv-grid-key">EnableAPIKeyPerEnvironment</td>
+                    <td>
+                        @if (_perEnvironmentKeys)
+                        {
+                            <span class="kv-type-badge kv-type-boolean">Enabled</span>
+                        }
+                        else
+                        {
+                            <span class="kv-type-badge kv-type-text">Disabled</span>
+                        }
+                    </td>
+                    <td class="kv-grid-value">
+                        @if (_perEnvironmentKeys)
+                        {
+                            <span>Environment-bound credentials are accepted. Manage them on the <a href="/apikeys">API Keys</a> page.</span>
+                        }
+                        else
+                        {
+                            <span>Only the Global keys in the <code>ApiKeys</code> array authenticate.</span>
+                        }
+                    </td>
+                </tr>
+                <tr>
+                    <td class="kv-grid-key">Global API keys</td>
+                    <td><span class="kv-type-badge kv-type-numeric">@_globalKeyCount configured</span></td>
+                    <td class="kv-grid-value">
+                        Rotating one is a configuration change plus a restart. Named entries appear in the
+                        <a href="/audit">audit log</a> by name; unnamed ones as <code>#0</code>, <code>#1</code>…
+                    </td>
+                </tr>
+                <tr>
+                    <td class="kv-grid-key">Value encryption</td>
+                    <td><span class="kv-type-badge kv-type-boolean">Active</span></td>
+                    <td class="kv-grid-value">
+                        Key values are AES-256 encrypted at rest. Back up <code>appsettings.json</code>
+                        alongside the database — losing the salt loses every value.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 @code {
+    // ── Runtime configuration (read-only) ────────────────────────
+    private bool _useSqlite;
+    private bool _globalKeyFailover;
+    private bool _perEnvironmentKeys;
+    private int _globalKeyCount;
+
     // ── Theme ────────────────────────────────────────────────────
     private DesignThemeModes _themeMode = DesignThemeModes.Light;
     private OfficeColor? _officeColor = Microsoft.FluentUI.AspNetCore.Components.OfficeColor.Default;
@@ -113,6 +215,13 @@
         _themeMode = await AppSettings.GetThemeModeAsync();
         _officeColor = await AppSettings.GetOfficeColorAsync();
         _appTitle = await AppSettings.GetAppTitleAsync();
+
+        // Read straight from configuration: these are startup settings, so the running
+        // values are what matters, not anything stored in the database.
+        _useSqlite = DbProviderConfig.UseSqlite(Config);
+        _globalKeyFailover = Vault.GlobalKeyFailover;
+        _perEnvironmentKeys = ApiKeys.Enabled;
+        _globalKeyCount = ApiKeyRegistry.Load(Config).Count;
     }
 
     // ── Theme actions ────────────────────────────────────────────

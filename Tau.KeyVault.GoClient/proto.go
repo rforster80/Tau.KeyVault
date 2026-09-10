@@ -316,6 +316,240 @@ func decodeDeleteEnvironmentResponse(data []byte) (*DeleteEnvironmentResponse, e
 	return r, nil
 }
 
+func decodeApiKey(data []byte) (ApiKeyResponse, error) {
+	d := newDecoder(data)
+	r := ApiKeyResponse{}
+	for !d.done() {
+		field, wt, err := d.readTag()
+		if err != nil {
+			return r, err
+		}
+		switch field {
+		case 1:
+			r.ID, err = d.readInt()
+		case 2:
+			r.Name, err = d.readString()
+		case 3:
+			r.Environment, err = d.readString()
+		case 4:
+			var v int
+			v, err = d.readInt()
+			r.Enabled = v != 0
+		case 5, 6:
+			// bcl.DateTime — skip (we prefer JSON for datetime)
+			err = d.skipField(wt)
+		default:
+			err = d.skipField(wt)
+		}
+		if err != nil {
+			return r, err
+		}
+	}
+	return r, nil
+}
+
+func decodeApiKeyResponse(data []byte) (*ApiKeyResponse, error) {
+	r, err := decodeApiKey(data)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func decodeApiKeyListResponse(data []byte) (*ApiKeyListResponse, error) {
+	d := newDecoder(data)
+	r := &ApiKeyListResponse{}
+	for !d.done() {
+		field, wt, err := d.readTag()
+		if err != nil {
+			return nil, err
+		}
+		switch field {
+		case 1:
+			b, err2 := d.readBytes()
+			if err2 != nil {
+				return nil, err2
+			}
+			item, err2 := decodeApiKey(b)
+			if err2 != nil {
+				return nil, err2
+			}
+			r.Items = append(r.Items, item)
+		default:
+			err = d.skipField(wt)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+func decodeApiKeySecretResponse(data []byte) (*ApiKeySecretResponse, error) {
+	d := newDecoder(data)
+	r := &ApiKeySecretResponse{}
+	for !d.done() {
+		field, wt, err := d.readTag()
+		if err != nil {
+			return nil, err
+		}
+		switch field {
+		case 1:
+			r.ID, err = d.readInt()
+		case 2:
+			r.Name, err = d.readString()
+		case 3:
+			r.Environment, err = d.readString()
+		case 4:
+			r.Key, err = d.readString()
+		case 5:
+			r.Message, err = d.readString()
+		default:
+			err = d.skipField(wt)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+func decodeRevokeApiKeyResponse(data []byte) (*RevokeApiKeyResponse, error) {
+	d := newDecoder(data)
+	r := &RevokeApiKeyResponse{}
+	for !d.done() {
+		field, wt, err := d.readTag()
+		if err != nil {
+			return nil, err
+		}
+		switch field {
+		case 1:
+			r.Message, err = d.readString()
+		case 2:
+			r.ID, err = d.readInt()
+		default:
+			err = d.skipField(wt)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+func encodeCreateApiKeyRequest(req *createApiKeyRequest) []byte {
+	e := &pbEncoder{}
+	e.writeString(1, req.Name)
+	e.writeString(2, req.Environment)
+	return e.bytes()
+}
+
+func encodeUpdateApiKeyRequest(req *updateApiKeyRequest) []byte {
+	e := &pbEncoder{}
+	e.writeBool(1, req.Enabled)
+	return e.bytes()
+}
+
+func decodeAuditEntry(data []byte) (AuditEntryResponse, error) {
+	d := newDecoder(data)
+	r := AuditEntryResponse{}
+	for !d.done() {
+		field, wt, err := d.readTag()
+		if err != nil {
+			return r, err
+		}
+		switch field {
+		case 1:
+			// bcl.DateTime — skip (we prefer JSON for datetime)
+			err = d.skipField(wt)
+		case 2:
+			r.Action, err = d.readString()
+		case 3:
+			r.Key, err = d.readString()
+		case 4:
+			r.Environment, err = d.readString()
+		case 5:
+			r.ActorType, err = d.readString()
+		case 6:
+			r.ActorID, err = d.readString()
+		case 7:
+			r.Outcome, err = d.readString()
+		case 8:
+			r.IPAddress, err = d.readString()
+		case 9:
+			r.ItemCount, err = d.readInt()
+		case 10:
+			r.ID, err = d.readInt()
+		default:
+			err = d.skipField(wt)
+		}
+		if err != nil {
+			return r, err
+		}
+	}
+	return r, nil
+}
+
+func decodeAuditEntryListResponse(data []byte) (*AuditEntryListResponse, error) {
+	d := newDecoder(data)
+	r := &AuditEntryListResponse{}
+	for !d.done() {
+		field, wt, err := d.readTag()
+		if err != nil {
+			return nil, err
+		}
+		switch field {
+		case 1:
+			b, err2 := d.readBytes()
+			if err2 != nil {
+				return nil, err2
+			}
+			item, err2 := decodeAuditEntry(b)
+			if err2 != nil {
+				return nil, err2
+			}
+			r.Items = append(r.Items, item)
+		case 2:
+			r.TotalCount, err = d.readInt()
+		case 3:
+			r.Limit, err = d.readInt()
+		case 4:
+			r.Offset, err = d.readInt()
+		default:
+			err = d.skipField(wt)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+func decodeDeleteKeyResponse(data []byte) (*DeleteKeyResponse, error) {
+	d := newDecoder(data)
+	r := &DeleteKeyResponse{}
+	for !d.done() {
+		field, wt, err := d.readTag()
+		if err != nil {
+			return nil, err
+		}
+		switch field {
+		case 1:
+			r.Message, err = d.readString()
+		case 2:
+			r.Key, err = d.readString()
+		case 3:
+			r.Environment, err = d.readString()
+		default:
+			err = d.skipField(wt)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
 func decodeRenameEnvironmentResponse(data []byte) (*RenameEnvironmentResponse, error) {
 	d := newDecoder(data)
 	r := &RenameEnvironmentResponse{}
@@ -428,4 +662,3 @@ func decodeImportResultResponse(data []byte) (*ImportResultResponse, error) {
 	}
 	return r, nil
 }
-

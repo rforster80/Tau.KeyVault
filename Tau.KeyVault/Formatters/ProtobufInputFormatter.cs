@@ -15,6 +15,7 @@ public class ProtobufInputFormatter : InputFormatter
     public ProtobufInputFormatter()
     {
         SupportedMediaTypes.Add(MediaTypeHeaderValue.Parse(ProtobufMediaType));
+
     }
 
     protected override bool CanReadType(Type type)

@@ -11,8 +11,11 @@ public class AppDbContext : DbContext
     public DbSet<KeyEntry> KeyEntries => Set<KeyEntry>();
     public DbSet<NatsConfig> NatsConfigs => Set<NatsConfig>();
     public DbSet<WebhookConfig> WebhookConfigs => Set<WebhookConfig>();
+    public DbSet<KafkaConfig> KafkaConfigs => Set<KafkaConfig>();
     public DbSet<NotificationLog> NotificationLogs => Set<NotificationLog>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+    public DbSet<AccessAuditLog> AccessAuditLogs => Set<AccessAuditLog>();
+    public DbSet<EnvironmentApiKey> EnvironmentApiKeys => Set<EnvironmentApiKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -36,6 +39,11 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.Environment);
         });
 
+        modelBuilder.Entity<KafkaConfig>(entity =>
+        {
+            entity.HasIndex(e => e.Environment);
+        });
+
         modelBuilder.Entity<NotificationLog>(entity =>
         {
             entity.HasIndex(e => e.Environment);
@@ -45,6 +53,25 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AppSetting>(entity =>
         {
             entity.HasIndex(e => e.Key).IsUnique();
+        });
+
+        modelBuilder.Entity<EnvironmentApiKey>(entity =>
+        {
+            entity.HasIndex(e => e.Name).IsUnique();
+            // Authentication looks the credential up by hash, so this must be both unique
+            // and indexed — it is on the hot path for every scoped request.
+            entity.HasIndex(e => e.KeyHash).IsUnique();
+            entity.HasIndex(e => e.Environment);
+        });
+
+        modelBuilder.Entity<AccessAuditLog>(entity =>
+        {
+            // Indexed for the questions the log exists to answer: what happened to this key,
+            // what has this credential been doing, and what happened in this window.
+            entity.HasIndex(e => e.Timestamp);
+            entity.HasIndex(e => new { e.Key, e.Environment });
+            entity.HasIndex(e => e.ActorId);
+            entity.HasIndex(e => e.Action);
         });
     }
 }

@@ -91,6 +91,9 @@ These methods map directly to the Tau Key Vault REST API endpoints.
 // List all keys (with global fallback)
 const { items } = await client.getAllKeys({ environment: 'Production' });
 
+// Every key in every environment — the raw dump clients use to build a local cache.
+const everything = await client.getAllKeysAllEnvironments();
+
 // Get a single key
 const entry = await client.getKey('SmtpHost', { environment: 'Production' });
 
@@ -100,6 +103,19 @@ await client.upsertKey('SmtpHost', 'mail.example.com', {
   dataType: 'Text',
   isSensitive: false,
 });
+```
+
+### Deleting a Key
+
+```js
+// Delete one key from one environment.
+const deleted = await client.deleteKey('ConnectionString', { environment: 'PRODUCTION' });
+console.log(`${deleted.key} removed from ${deleted.environment}`);
+
+// Unlike a get, a delete never falls back to Global: if the key exists only globally,
+// this rejects with a 404 rather than deleting it. Pass an empty environment to
+// delete the global entry itself.
+await client.deleteKey('ConnectionString', { environment: '' });
 ```
 
 ### Environments
@@ -232,6 +248,86 @@ const has = await client.csvContains('AllowedOrigins', 'https://app.example.com'
 await client.csvReplace('AllowedOrigins', 'https://old.example.com', 'https://new.example.com');
 ```
 
+## Access Audit Log
+
+Every read, write and delete is recorded server-side. Values are never recorded, so
+nothing here can leak a secret.
+
+```js
+import { KeyVaultAuditAction, KeyVaultAuditOutcome } from 'tau-keyvault-client';
+
+// Everything that happened to one key — the erasure-evidence question.
+const trail = await client.getKeyAuditTrail('SubjectEmail');
+for (const row of trail.items) {
+  console.log(`${row.timestamp} ${row.action} ${row.actorType}:${row.actorId} ${row.outcome}`);
+}
+
+// Was a specific key actually destroyed?
+const erased = await client.getAuditLog({
+  key: 'SubjectEmail',
+  action: KeyVaultAuditAction.DeleteKey,
+});
+
+// What has one credential been doing this week?
+const byCredential = await client.getAuditLog({
+  actorId: 'adapter-prod',
+  from: new Date(Date.now() - 7 * 24 * 3600 * 1000),
+  limit: 500,
+});
+
+// Rejected credentials — the signal for a leaked key.
+const denied = await client.getAuditLog({
+  action: KeyVaultAuditAction.AuthFailure,
+  outcome: KeyVaultAuditOutcome.Denied,
+});
+console.log(`${denied.totalCount} rejected attempts`);
+```
+
+## Per-Environment API Credentials
+
+Requires a Global API key, and `EnableAPIKeyPerEnvironment` on the server. A credential
+bound to an environment sees only that environment, with no Global fallback.
+
+```js
+// Mint a credential. The secret is returned once and is never retrievable again.
+const minted = await client.createApiKey('adapter-prod', 'PRODUCTION');
+console.log(`Store this now: ${minted.key}`);
+
+// List them — metadata only, never the secret.
+const { items } = await client.listApiKeys();
+items.forEach(k => console.log(`${k.id} ${k.name} -> ${k.environment} (enabled: ${k.enabled})`));
+
+// Rotate: the previous secret stops working immediately.
+const rotated = await client.rotateApiKey(minted.id);
+console.log(`New secret: ${rotated.key}`);
+
+// Suspend without deleting, so the audit trail keeps naming its subject.
+await client.setApiKeyEnabled(minted.id, false);
+
+// Or remove it permanently.
+await client.revokeApiKey(minted.id);
+```
+
+## Publishing
+
+`sample_publish-npm.sh` builds and publishes the package. Copy it to the un-prefixed names —
+`publish-npm.sh`, `npm_version.txt` — which are gitignored, then set your registry and token:
+
+```bash
+cp sample_publish-npm.sh publish-npm.sh
+cp sample_npm_version.txt npm_version.txt
+
+# inspect the tarball without publishing
+NPM_TOKEN=xxxx ./publish-npm.sh -n
+
+# publish
+NPM_TOKEN=xxxx ./publish-npm.sh -r "https://registry.npmjs.org" -a public
+```
+
+It increments the patch in the version file, syncs `package.json` to match, then publishes.
+Auth is written to a temporary `.npmrc` that is removed on exit, so the token never has to
+live in a committed file.
+
 ## Error Handling
 
 All API errors throw a `KeyVaultApiError` with `statusCode` and `apiError` properties.
@@ -296,9 +392,18 @@ import {
 | Method | Description |
 |--------|-------------|
 | `getAllKeys(opts?)` | List all keys for an environment |
+| `getAllKeysAllEnvironments(opts?)` | List all keys across every environment (no filtering) |
 | `getKey(key, opts?)` | Get a single key by name |
 | `upsertKey(key, value, opts?)` | Create or update a key |
 | `getEnvironments(opts?)` | List all environments |
+| `deleteKey(key, opts?)` | Delete a single key from one environment (no global fallback) |
+| `getAuditLog(opts?)` | Query the access audit log (filters: key, environment, actorId, action, outcome, from, to) |
+| `getKeyAuditTrail(key, opts?)` | Every audit row for one key, including its erasure evidence |
+| `listApiKeys(opts?)` | List per-environment credentials (Global only; secrets never returned) |
+| `createApiKey(name, env, opts?)` | Mint a credential bound to one environment; the key is returned once |
+| `rotateApiKey(id, opts?)` | Replace a credential's secret; the previous key stops working immediately |
+| `setApiKeyEnabled(id, enabled, opts?)` | Suspend or resume a credential without deleting it |
+| `revokeApiKey(id, opts?)` | Permanently remove a credential |
 | `deleteEnvironment(env, opts?)` | Delete an environment and its keys |
 | `renameEnvironment(env, newName, opts?)` | Rename an environment |
 | `export(opts?)` | Export all keys for an environment |
